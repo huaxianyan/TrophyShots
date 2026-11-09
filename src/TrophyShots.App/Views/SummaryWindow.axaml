@@ -1,0 +1,37 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:TrophyShots.App.ViewModels"
+        x:Class="TrophyShots.App.Views.SummaryWindow"
+        x:DataType="vm:SummaryViewModel"
+        Title="处理汇总"
+        Width="620" Height="440"
+        MinWidth="480" MinHeight="320"
+        Background="#12141A"
+        WindowStartupLocation="CenterOwner">
+
+  <Grid RowDefinitions="Auto,*,Auto" Margin="18">
+    <StackPanel Grid.Row="0">
+      <TextBlock Text="{Binding Headline}" FontSize="17" FontWeight="SemiBold" />
+      <TextBlock Text="{Binding Counts}" Margin="0,6,0,0" Opacity="0.75" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <Border Grid.Row="1" Margin="0,14" BorderBrush="#262B36" BorderThickness="1" CornerRadius="6" Padding="6">
+      <ScrollViewer>
+        <ItemsControl ItemsSource="{Binding Lines}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:SummaryLine">
+              <Grid ColumnDefinitions="Auto,*" Margin="4,3">
+                <Border Grid.Column="0" CornerRadius="9" Padding="8,2" Background="#22FFFFFF" Margin="0,0,8,0">
+                  <TextBlock Text="{Binding Kind}" FontSize="11" />
+                </Border>
+                <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+
+    <Button Grid.Row="2" HorizontalAlignment="Right" Content="关闭" Padding="16,6" Click="OnClose" />
+  </Grid>
+</Window>

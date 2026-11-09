@@ -15,10 +15,14 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly AppLogger _log;
     private readonly MpvPlaybackService _player;
     private CancellationTokenSource _operation = new();
+    private CancellationTokenSource _scan = new();
     private string? _directory;
     private double? _frameRate;
     private readonly ScreenshotNaming _naming;
     private readonly string? _mpvConfigDirectory;
+    private IntPtr _hostHandle;
+    private bool _shuttingDown;
+    private ProcessingState _state = new();
 
     public MainWindowViewModel(AppOptions options, AppLogger log)
     {
@@ -35,6 +39,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         _player = new MpvPlaybackService(options, log);
         _player.PropertyChanged += OnPlayerPropertyChanged;
+        _player.Faulted += OnPlayerFaulted;
     }
 
     /// <summary>选目录的窗口对话框由视图注入，ViewModel 不直接碰 UI 平台。</summary>
@@ -55,6 +60,12 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isReady;
     [ObservableProperty] private bool _isPaused = true;
 
+    /// <summary>非常帧率录像：逐帧改成按时间步进，界面要提示。</summary>
+    [ObservableProperty] private bool _isTimeBasedStepping;
+
+    /// <summary>全部处理完（或只剩出错条目）时抛给界面显示汇总。</summary>
+    public event Action<LibrarySummary>? SummaryRequested;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSelection))]
     private VideoItemViewModel? _selectedVideo;
@@ -71,6 +82,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         try
         {
+            _hostHandle = hostHandle;
             await _player.StartAsync(hostHandle, _naming, _operation.Token);
             _log.Info($"播放器就绪 pid={_player.ProcessId} host=0x{hostHandle:X}");
             StatusMessage = "播放器已就绪，选择一条录像开始。";
@@ -93,6 +105,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     public async Task ShutdownAsync()
     {
+        _shuttingDown = true;
         SaveState(SelectedVideo, PositionSeconds);
         await _player.DisposeAsync();
     }
@@ -145,6 +158,13 @@ public partial class MainWindowViewModel : ObservableObject
 
     public async Task OpenDirectoryAsync(string directory)
     {
+        // 扫描与探测有自己的令牌：切换/打开某条录像会取消播放器操作，但不该打断探测。
+        CancellationTokenSource previousScan = _scan;
+        _scan = new CancellationTokenSource();
+        previousScan.Cancel();
+        previousScan.Dispose();
+
+        _log.Info($"扫描目录 {directory}");
         _directory = directory;
         DirectoryPath = directory;
         Videos.Clear();
@@ -183,9 +203,10 @@ public partial class MainWindowViewModel : ObservableObject
         StatusMessage = $"找到 {Videos.Count} 条录像，正在读取时长…";
         await ProbeDurationsAsync();
 
-        ProcessingState state = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
+        _state = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
         VideoItemViewModel? target =
-            Videos.FirstOrDefault(v => v.FileName == state.LastFileName)
+            Videos.FirstOrDefault(v => v.FileName == _state.LastFileName)
+            ?? Videos.FirstOrDefault(v => !v.Completed && !v.Broken)
             ?? Videos.FirstOrDefault(v => !v.Completed)
             ?? Videos.FirstOrDefault();
 
@@ -199,7 +220,7 @@ public partial class MainWindowViewModel : ObservableObject
     private async Task ProbeDurationsAsync()
     {
         using var throttle = new SemaphoreSlim(4);
-        CancellationToken cancellationToken = _operation.Token;
+        CancellationToken cancellationToken = _scan.Token;
 
         await Task.WhenAll(Videos.Select(async item =>
         {
@@ -207,7 +228,16 @@ public partial class MainWindowViewModel : ObservableObject
             try
             {
                 MediaProbeResult result = await MediaProbe.ProbeAsync(_options.FfprobePath, item.FullPath, cancellationToken);
-                await Dispatcher.UIThread.InvokeAsync(() => item.ApplyProbe(result));
+                _log.Info($"探测 {item.FileName} duration={result.Duration?.TotalSeconds:0.###}s fps={result.FrameRate:0.###} vfr={result.IsVariableFrameRate} samples={result.SampleCount}");
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    item.ApplyProbe(result);
+                    // 探测可能晚于"打开"，选中项的步进方式要跟着补上。
+                    if (ReferenceEquals(item, SelectedVideo))
+                    {
+                        IsTimeBasedStepping = item.IsVariableFrameRate;
+                    }
+                });
             }
             catch (OperationCanceledException)
             {
@@ -241,7 +271,10 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task OpenVideoAsync(VideoItemViewModel item)
+    private Task OpenVideoAsync(VideoItemViewModel item) => OpenVideoAtAsync(item, null);
+
+    /// <summary>打开录像。<paramref name="positionOverride"/> 有值时用它，否则按状态文件续做。</summary>
+    private async Task OpenVideoAtAsync(VideoItemViewModel item, double? positionOverride)
     {
         CancellationToken cancellationToken = BeginOperation();
         try
@@ -250,6 +283,7 @@ public partial class MainWindowViewModel : ObservableObject
             FrameText = "帧 —";
             PositionText = "加载中…";
             DurationSeconds = Math.Max((item.Duration?.TotalSeconds) ?? 1, 0.1);
+            IsTimeBasedStepping = item.IsVariableFrameRate;
 
             var watch = System.Diagnostics.Stopwatch.StartNew();
             await _player.LoadAsync(item.FullPath, cancellationToken);
@@ -266,10 +300,26 @@ public partial class MainWindowViewModel : ObservableObject
 
             _frameRate = await _player.GetNumberAsync("container-fps", cancellationToken);
             IsReady = true;
-            StatusMessage = $"已打开 {item.FileName}";
-            _log.Info($"打开 {item.FileName} 首帧 {watch.ElapsedMilliseconds}ms fps={_frameRate:0.###}");
-            SaveState(item, 0);
-            await RefreshPositionAsync(cancellationToken);
+            _log.Info($"打开 {item.FileName} 首帧 {watch.ElapsedMilliseconds}ms fps={_frameRate:0.###} vfr={item.IsVariableFrameRate}");
+
+            double resume = positionOverride ?? ResumePolicy.Resolve(_state, item.FileName, DurationSeconds);
+
+            if (resume > ResumePolicy.MinimumPositionSeconds)
+            {
+                await _player.SeekAsync(resume, cancellationToken);
+                await RefreshPositionAsync(cancellationToken);
+                StatusMessage = $"已打开 {item.FileName}，从上次 {FormatPosition(resume)} 继续。";
+                _log.Info($"续做 {item.FileName} position={resume:0.000}");
+            }
+            else
+            {
+                StatusMessage = item.IsVariableFrameRate
+                    ? $"已打开 {item.FileName}（非常帧率：逐帧改为按时间步进）"
+                    : $"已打开 {item.FileName}";
+                await RefreshPositionAsync(cancellationToken);
+            }
+
+            SaveState(item, resume);
         }
         catch (OperationCanceledException)
         {
@@ -331,6 +381,14 @@ public partial class MainWindowViewModel : ObservableObject
         CancellationToken cancellationToken = _operation.Token;
         try
         {
+            if (IsTimeBasedStepping)
+            {
+                // 非常帧率下 mpv 的 frame-step 语义不稳定，按 1/fps 秒换算成时间步进。
+                double secondsPerFrame = 1.0 / (_frameRate is > 0 ? _frameRate.Value : 60.0);
+                await SeekToAsync(PositionSeconds + (frames * secondsPerFrame));
+                return;
+            }
+
             await _player.StepAsync(frames, cancellationToken);
             await RefreshPositionAsync(cancellationToken);
         }
@@ -366,6 +424,7 @@ public partial class MainWindowViewModel : ObservableObject
         {
             await _player.SeekAsync(Math.Clamp(seconds, 0, DurationSeconds), cancellationToken);
             await RefreshPositionAsync(cancellationToken);
+            SaveState(SelectedVideo, PositionSeconds);
         }
         catch (OperationCanceledException)
         {
@@ -375,6 +434,9 @@ public partial class MainWindowViewModel : ObservableObject
             StatusMessage = $"定位失败：{ex.Message}";
         }
     }
+
+    /// <summary>当前 mpv 进程号，自检用来模拟"播放器挂掉"。</summary>
+    public int PlayerProcessId => _player.ProcessId;
 
     /// <summary>当前的截图规则与录像规则，自检用来核对落盘位置。</summary>
     public string? ScreenshotTargetFor(string videoPath) => _naming.TryResolveTarget(videoPath, _mpvConfigDirectory);
@@ -425,7 +487,7 @@ public partial class MainWindowViewModel : ObservableObject
 
             if (advance)
             {
-                await MoveAsync(1);
+                await MoveAsync(1, skipBroken: true);
             }
         }
         catch (OperationCanceledException)
@@ -446,7 +508,7 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private Task PreviousAsync() => MoveAsync(-1);
 
-    private async Task MoveAsync(int offset)
+    private async Task MoveAsync(int offset, bool skipBroken = false)
     {
         if (SelectedVideo is null || Videos.Count == 0)
         {
@@ -455,23 +517,104 @@ public partial class MainWindowViewModel : ObservableObject
 
         int index = Videos.IndexOf(SelectedVideo);
         int target = index + offset;
+
+        if (skipBroken)
+        {
+            while (target >= 0 && target < Videos.Count && Videos[target].Broken)
+            {
+                target += offset;
+            }
+        }
+
         if (target < 0)
         {
             StatusMessage = "已经是第一条。";
+            await Task.CompletedTask;
             return;
         }
 
         if (target >= Videos.Count)
         {
+            SaveState(SelectedVideo, PositionSeconds);
             StatusMessage = "已经是最后一条。";
+            RaiseSummaryIfFinished();
             await Task.CompletedTask;
             return;
         }
 
         SelectedVideo = Videos[target];
+        RaiseSummaryIfFinished();
     }
 
+    /// <summary>没有待处理条目时把汇总抛给界面。</summary>
+    private void RaiseSummaryIfFinished()
+    {
+        LibrarySummary summary = BuildSummary();
+        if (summary.Pending.Count > 0)
+        {
+            return;
+        }
+
+        StatusMessage = summary.Describe();
+        SummaryRequested?.Invoke(summary);
+    }
+
+    public LibrarySummary BuildSummary() => new(
+        Videos.Count,
+        Videos.Count(v => v.Completed),
+        Videos.Where(v => v.Broken).Select(v => v.FileName).ToArray(),
+        Videos.Where(v => !v.Completed && !v.Broken).Select(v => v.FileName).ToArray());
+
+    [RelayCommand]
+    private void ShowSummary() => SummaryRequested?.Invoke(BuildSummary());
+
     // ---------------- 播放器事件 ----------------
+
+    private void OnPlayerFaulted(string reason)
+    {
+        if (_shuttingDown)
+        {
+            return;
+        }
+
+        _log.Info($"播放器断开：{reason}");
+        Dispatcher.UIThread.Post(() => _ = RestartPlayerAsync($"播放器断开了（{reason}），正在重启…"));
+    }
+
+    [RelayCommand]
+    private Task RestartPlayer() => RestartPlayerAsync("正在重启播放器…");
+
+    /// <summary>mpv 没了就把播放器重新拉起来，并回到当前录像与位置，不丢列表与已处理状态。</summary>
+    private async Task RestartPlayerAsync(string status)
+    {
+        if (_hostHandle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        VideoItemViewModel? current = SelectedVideo;
+        double position = PositionSeconds;
+        StatusMessage = status;
+
+        try
+        {
+            await _player.DisposeAsync();
+            await _player.StartAsync(_hostHandle, _naming, _operation.Token);
+
+            if (current is not null)
+            {
+                await OpenVideoAtAsync(current, position);
+            }
+
+            StatusMessage = $"播放器已重启，回到「{current?.FileName ?? "无录像"}」。";
+            _log.Info("播放器重启完成");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"播放器重启失败：{ex.Message}。可以点「重启播放器」再试。";
+            _log.Info($"播放器重启失败 {ex.GetType().Name}: {ex.Message}");
+        }
+    }
 
     private void OnPlayerPropertyChanged(string name, JsonElement value)
     {

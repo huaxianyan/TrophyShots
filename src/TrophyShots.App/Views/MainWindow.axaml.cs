@@ -46,6 +46,7 @@ public partial class MainWindow : Window
         if (_viewModel is not null)
         {
             _viewModel.DirectoryPicker = PickDirectoryAsync;
+            _viewModel.SummaryRequested += OnSummaryRequested;
         }
     }
 
@@ -78,6 +79,16 @@ public partial class MainWindow : Window
     /// 选目录。默认用系统文件夹对话框；但本机 MacType 的 GDI hook 会让那个对话框把进程
     /// 崩在 gdi32full.dll（2026-11-10 实测），所以检测到被注入时自动改用内置选择器。
     /// </summary>
+    /// <summary>全部处理完或只剩出错条目时弹出汇总，用自带的窗口，不走系统对话框。</summary>
+    private void OnSummaryRequested(LibrarySummary summary)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+        {
+            var dialog = new SummaryWindow { DataContext = new SummaryViewModel(summary) };
+            await dialog.ShowDialog(this);
+        });
+    }
+
     private async Task<string?> PickDirectoryAsync()
     {
         if (_viewModel is null)

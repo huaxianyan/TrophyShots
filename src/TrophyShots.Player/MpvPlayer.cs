@@ -19,6 +19,7 @@ public sealed class MpvPlayer : IAsyncDisposable
 
     private readonly MpvProcess _process;
     private readonly MpvIpc _ipc;
+    private bool _disposing;
 
     private MpvPlayer(MpvProcess process, MpvIpc ipc)
     {
@@ -48,7 +49,16 @@ public sealed class MpvPlayer : IAsyncDisposable
                 await ipc.ObservePropertyAsync(property, cancellationToken).ConfigureAwait(false);
             }
 
-            return new MpvPlayer(process, ipc);
+            var player = new MpvPlayer(process, ipc);
+            process.Exited += () =>
+            {
+                if (!player._disposing)
+                {
+                    player.Faulted?.Invoke("mpv 进程已退出");
+                }
+            };
+
+            return player;
         }
         catch
         {
@@ -183,6 +193,8 @@ public sealed class MpvPlayer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _disposing = true;
+
         try
         {
             await _ipc.CommandAsync(CancellationToken.None, "quit").ConfigureAwait(false);

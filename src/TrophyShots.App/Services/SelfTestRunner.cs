@@ -27,6 +27,15 @@ public static class SelfTestRunner
             log.Info($"selftest {name}: {(ok ? "PASS" : "FAIL")} {detail}");
         }
 
+        if (options.SelfTest is "resume-a" or "resume-b" or "vfr" or "restart" or "broken")
+        {
+            await RunScenarioAsync(window, viewModel, log, results, Check, options.SelfTest);
+            Summarize(log, results);
+            await Task.Delay(300);
+            Dispatcher.UIThread.Post(window.Close);
+            return;
+        }
+
         if (options.SelfTest == "probe")
         {
             await RunProbeAsync(window, viewModel, log, results, Check);
@@ -49,7 +58,13 @@ public static class SelfTestRunner
 
         try
         {
-            await viewModel.OpenDirectoryAsync(directory);
+            // --directory 会在播放器就绪后自动打开，这里等它，不重复扫描。
+            await WaitUntilAsync(() => viewModel.Videos.Count > 0, TimeSpan.FromSeconds(15), token);
+            if (viewModel.Videos.Count == 0)
+            {
+                await viewModel.OpenDirectoryAsync(directory);
+            }
+
             await WaitUntilAsync(() => viewModel.IsReady, TimeSpan.FromSeconds(30), token);
 
             Check("scan-count", viewModel.Videos.Count > 0, $"列表 {viewModel.Videos.Count} 条");
@@ -117,6 +132,13 @@ public static class SelfTestRunner
             ProcessingState state = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
             Check("state-file", state.LastFileName == viewModel.SelectedVideo?.FileName,
                 $"记录 {state.LastFileName}，当前 {viewModel.SelectedVideo?.FileName}");
+
+            LibrarySummary summary = viewModel.BuildSummary();
+            Check("summary-counts",
+                summary.Total == viewModel.Videos.Count
+                    && summary.Completed == viewModel.Videos.Count(v => v.Completed)
+                    && summary.Pending.Count + summary.Completed + summary.Broken.Count == summary.Total,
+                $"共 {summary.Total} · 完成 {summary.Completed} · 出错 {summary.Broken.Count} · 未处理 {summary.Pending.Count}");
 
             await CheckKeyboardAsync(window, viewModel, Check);
             await CheckFocusBounceAsync(window, Check);
@@ -196,6 +218,114 @@ public static class SelfTestRunner
     /// 键盘映射：在 Avalonia 的路由事件里发一个 KeyDown，验证快捷键接到了命令上。
     /// 不走操作系统输入（自检窗口不激活，硬投递 WM_KEYDOWN 会被框架按"窗口未激活"丢掉）。
     /// </summary>
+    /// <summary>
+    /// 三个针对性场景：断点续做的写/读两段（必需两次进程），以及非常帧率录像的退化步进。
+    /// </summary>
+    private static async Task RunScenarioAsync(
+        Views.MainWindow window,
+        MainWindowViewModel viewModel,
+        AppLogger log,
+        List<(string Name, bool Ok, string Detail)> results,
+        Action<string, bool, string> check,
+        string mode)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        CancellationToken token = cancellation.Token;
+        string directory = App.Options.Directory!;
+
+        try
+        {
+            // --directory 会在播放器就绪后自动打开；等列表真的建好，别重复扫描。
+            await WaitUntilAsync(() => viewModel.Videos.Count > 0, TimeSpan.FromSeconds(15), token);
+
+            if (viewModel.Videos.Count == 0)
+            {
+                await viewModel.OpenDirectoryAsync(directory);
+            }
+
+            await WaitUntilAsync(() => viewModel.IsReady, TimeSpan.FromSeconds(30), token);
+            await WaitUntilAsync(() => viewModel.Videos.All(v => v.Duration is not null || v.Broken), TimeSpan.FromSeconds(15), token);
+
+            if (viewModel.SelectedVideo is null)
+            {
+                check($"{mode}-selected", false, "没有选中录像");
+                return;
+            }
+
+            string name = viewModel.SelectedVideo.FileName;
+            ProcessingState state = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
+
+            switch (mode)
+            {
+                case "resume-a":
+                    await viewModel.SeekToAsync(2.5);
+                    await Task.Delay(200);
+                    ProcessingState written = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
+                    check("resume-write", written.LastFileName == name && Math.Abs(written.LastPositionSeconds - 2.5) < 0.5,
+                        $"状态 {written.LastFileName} @ {written.LastPositionSeconds:0.000}s");
+                    break;
+
+                case "resume-b":
+                    check("resume-target", state.LastFileName == name, $"状态指向 {state.LastFileName}，当前 {name}");
+                    check("resume-position", viewModel.PositionSeconds is > 2.0 and < 3.2,
+                        $"续做位置 {viewModel.PositionText}");
+                    break;
+
+                case "restart":
+                {
+                    int pid = viewModel.PlayerProcessId;
+                    check("player-pid", pid > 0, $"pid={pid}");
+                    if (pid > 0)
+                    {
+                        System.Diagnostics.Process.GetProcessById(pid).Kill();
+                    }
+
+                    await WaitUntilAsync(
+                        () => viewModel.IsReady && viewModel.PlayerProcessId is > 0 && viewModel.PlayerProcessId != pid,
+                        TimeSpan.FromSeconds(40),
+                        token);
+
+                    check("player-restarted", viewModel.PlayerProcessId is > 0 && viewModel.PlayerProcessId != pid,
+                        $"pid {pid} -> {viewModel.PlayerProcessId}");
+
+                    double frame = await viewModel.ReadFrameAsync(token) ?? -1;
+                    check("player-restarted-readable", frame >= 0, $"重启后帧 {frame}");
+                    break;
+                }
+
+                case "broken":
+                {
+                    VideoItemViewModel? broken = viewModel.Videos.FirstOrDefault(v => v.Broken);
+                    check("broken-flagged", broken is not null,
+                        broken is null ? "没有标出损坏条目" : $"已标红 {broken.FileName}");
+                    check("broken-only-as-detail", viewModel.Videos.Count(v => v.Broken) == 1,
+                        $"出错条目 {viewModel.Videos.Count(v => v.Broken)} 条");
+                    break;
+                }
+
+                case "vfr":
+                    check("vfr-detected", viewModel.SelectedVideo.IsVariableFrameRate,
+                        $"非常帧率标记 {viewModel.SelectedVideo.IsVariableFrameRate}");
+                    check("vfr-time-stepping", viewModel.IsTimeBasedStepping, $"按时间步进 {viewModel.IsTimeBasedStepping}");
+
+                    double before = viewModel.PositionSeconds;
+                    await viewModel.StepAsync(1);
+                    double after = viewModel.PositionSeconds;
+                    check("vfr-step-advances-time", after > before,
+                        $"{MainWindowViewModel.FormatPosition(before)} -> {MainWindowViewModel.FormatPosition(after)}");
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            check($"{mode}-timeout", false, "2 分钟内没跑完");
+        }
+        catch (Exception ex)
+        {
+            check($"{mode}-exception", false, $"{ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     /// <summary>抓一次窗口，确认视频区真的有画面（不只是 mpv 解出了帧）。</summary>
     private static void CheckRendering(Views.MainWindow window, AppLogger log, Action<string, bool, string> check)
     {

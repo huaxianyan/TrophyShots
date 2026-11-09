@@ -20,6 +20,9 @@ public partial class VideoItemViewModel : ObservableObject
     /// <summary>ffprobe 读到的时长；读失败时为空。</summary>
     public TimeSpan? Duration { get; private set; }
 
+    /// <summary>帧率不是常数（r_frame_rate ≠ avg_frame_rate），逐帧步进要退化成按时间步进。</summary>
+    public bool IsVariableFrameRate { get; private set; }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DetailText))]
     [NotifyPropertyChangedFor(nameof(StatusText))]
@@ -49,6 +52,7 @@ public partial class VideoItemViewModel : ObservableObject
         }
 
         Duration = result.Duration;
+        IsVariableFrameRate = result.IsVariableFrameRate;
         string duration = FormatDuration(result.Duration.Value);
         DurationText = result.IsVariableFrameRate ? $"{duration} · 非常数帧率" : duration;
         Detail = DurationText;

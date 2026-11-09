@@ -21,6 +21,9 @@ public sealed class MpvPlaybackService : IAsyncDisposable
 
     public event Action<string, JsonElement>? PropertyChanged;
 
+    /// <summary>mpv 进程断开或 IPC 读循环异常结束。</summary>
+    public event Action<string>? Faulted;
+
     public bool IsStarted => _player is not null;
 
     public int ProcessId => _player?.ProcessId ?? 0;
@@ -44,7 +47,11 @@ public sealed class MpvPlaybackService : IAsyncDisposable
         }, cancellationToken).ConfigureAwait(false);
 
         player.PropertyChanged += (name, value) => PropertyChanged?.Invoke(name, value);
-        player.Faulted += reason => _log.Info($"mpv 连接中断：{reason}");
+        player.Faulted += reason =>
+        {
+            _log.Info($"mpv 连接中断：{reason}");
+            Faulted?.Invoke(reason);
+        };
         _player = player;
     }
 

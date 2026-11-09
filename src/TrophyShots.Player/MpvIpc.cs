@@ -142,6 +142,12 @@ public sealed class MpvIpc : IAsyncDisposable
         finally
         {
             FailPending("mpv IPC 连接已断开");
+
+            // 正常 EOF（mpv 退出或管道被关）也要当作断开，否则上层收不到任何信号。
+            if (!_cancellation.IsCancellationRequested)
+            {
+                Faulted?.Invoke("mpv 关闭了 IPC 连接");
+            }
         }
     }
 

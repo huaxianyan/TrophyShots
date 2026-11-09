@@ -39,6 +39,9 @@ public sealed class MpvProcess : IDisposable
 
     public string PipePath { get; }
 
+    /// <summary>mpv 进程退出（不论原因）。</summary>
+    public event Action? Exited;
+
     public int ProcessId => _process.Id;
 
     public bool HasExited
@@ -87,7 +90,10 @@ public sealed class MpvProcess : IDisposable
             job = IntPtr.Zero;
         }
 
-        return new MpvProcess(process, job, pipePath);
+        var instance = new MpvProcess(process, job, pipePath);
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => instance.Exited?.Invoke();
+        return instance;
     }
 
     private static IEnumerable<string> BuildArguments(MpvStartOptions options, string pipePath)
