@@ -79,20 +79,22 @@ public static class SelfTestRunner
             Check("seek-one-second", frameAtOneSecond.HasValue && Math.Abs(frameAtOneSecond.Value - expected) <= 2,
                 $"1 秒处帧 {frameAtOneSecond}（期望约 {expected}）");
 
-            string screenshotPath = VideoLibrary.ScreenshotPathFor(first.FullPath);
-            if (File.Exists(screenshotPath))
+            string? screenshotPath = viewModel.ScreenshotTargetFor(first.FullPath);
+            if (screenshotPath is not null && File.Exists(screenshotPath))
             {
                 File.Delete(screenshotPath);
             }
 
             await viewModel.CaptureCommand.ExecuteAsync(null);
-            bool written = File.Exists(screenshotPath);
-            string detail = written ? $"{Path.GetFileName(screenshotPath)} {new FileInfo(screenshotPath).Length} 字节" : "未生成";
+            bool written = screenshotPath is not null && File.Exists(screenshotPath);
+            string detail = written
+                ? $"{Path.GetFileName(screenshotPath!)} {new FileInfo(screenshotPath!).Length} 字节"
+                : $"未生成（期望 {screenshotPath ?? "模板算不出，只能探测"}）";
             Check("screenshot-written", written, detail);
 
             if (written)
             {
-                using FileStream stream = File.OpenRead(screenshotPath);
+                using FileStream stream = File.OpenRead(screenshotPath!);
                 var bitmap = new Bitmap(stream);
                 Check("screenshot-resolution", bitmap.PixelSize.Width == 640 && bitmap.PixelSize.Height == 360,
                     $"{bitmap.PixelSize.Width}x{bitmap.PixelSize.Height}");

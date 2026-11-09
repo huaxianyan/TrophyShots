@@ -6,7 +6,6 @@ public static class VideoLibrary
     /// <summary>PLAN §6.1 认可的录像扩展名。</summary>
     public static readonly string[] VideoExtensions = [".mp4", ".mkv", ".mov", ".webm", ".m4v"];
 
-    public const string ScreenshotFolderName = "screenshots";
     public const string StateFileName = ".state.json";
 
     public static bool IsVideoFile(string path)
@@ -30,16 +29,6 @@ public static class VideoLibrary
 
         return files;
     }
-
-    /// <summary>一个录像对应一张截图：<c>screenshots/&lt;录像主文件名&gt;.png</c>。</summary>
-    public static string ScreenshotPathFor(string videoPath)
-    {
-        string directory = Path.GetDirectoryName(Path.GetFullPath(videoPath))!;
-        string name = Path.GetFileNameWithoutExtension(videoPath) + ".png";
-        return Path.Combine(directory, ScreenshotFolderName, name);
-    }
-
-    public static bool HasScreenshot(string videoPath) => File.Exists(ScreenshotPathFor(videoPath));
 
     public static string StatePathFor(string directory) => Path.Combine(directory, StateFileName);
 }

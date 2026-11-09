@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using TrophyShots.App.Services;
 using TrophyShots.App.ViewModels;
 using TrophyShots.App.Views;
@@ -25,11 +26,20 @@ public partial class App : Avalonia.Application
     public override void OnFrameworkInitializationCompleted()
     {
         StartupDiagnostics.Record("OnFrameworkInitializationCompleted");
+
+        // UI 线程上的未处理异常：先记账再放行，避免"程序没了但没有任何线索"。
+        Dispatcher.UIThread.UnhandledException += (_, e) =>
+        {
+            StartupDiagnostics.RecordException("UI 线程未处理异常", e.Exception);
+            Log.Info($"UI 线程未处理异常 {e.Exception.GetType().Name}: {e.Exception.Message}");
+        };
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             AppOptions options = Options;
             Log = new AppLogger(options.LogPath);
             AppLogger log = Log;
+            log.Info($"环境：MacType 已注入={Services.MacTypeDetector.IsInjected()}，选目录对话框={options.Picker}");
             var viewModel = new MainWindowViewModel(options, log);
             var window = new MainWindow { DataContext = viewModel };
 

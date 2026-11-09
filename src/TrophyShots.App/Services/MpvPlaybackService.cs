@@ -25,7 +25,10 @@ public sealed class MpvPlaybackService : IAsyncDisposable
 
     public int ProcessId => _player?.ProcessId ?? 0;
 
-    public async Task StartAsync(IntPtr hostHandle, CancellationToken cancellationToken)
+    public async Task StartAsync(
+        IntPtr hostHandle,
+        Core.ScreenshotNaming naming,
+        CancellationToken cancellationToken)
     {
         if (_player is not null)
         {
@@ -36,6 +39,8 @@ public sealed class MpvPlaybackService : IAsyncDisposable
         {
             ExecutablePath = _options.MpvPath,
             HostWindowHandle = hostHandle.ToInt64(),
+            ScreenshotTemplate = naming.Template,
+            ScreenshotFormat = naming.Format,
         }, cancellationToken).ConfigureAwait(false);
 
         player.PropertyChanged += (name, value) => PropertyChanged?.Invoke(name, value);
@@ -55,8 +60,8 @@ public sealed class MpvPlaybackService : IAsyncDisposable
     public Task StepAsync(int frames, CancellationToken cancellationToken) =>
         RequirePlayer().StepAsync(frames, cancellationToken);
 
-    public Task ScreenshotAsync(string absolutePath, CancellationToken cancellationToken) =>
-        RequirePlayer().ScreenshotAsync(absolutePath, cancellationToken);
+    public Task<string?> TakeScreenshotAsync(string directory, string? expectedPath, CancellationToken cancellationToken) =>
+        RequirePlayer().TakeScreenshotAsync(directory, expectedPath, cancellationToken);
 
     public Task<double?> GetNumberAsync(string property, CancellationToken cancellationToken) =>
         RequirePlayer().GetNumberAsync(property, cancellationToken);

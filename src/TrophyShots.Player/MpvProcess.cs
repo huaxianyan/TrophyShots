@@ -10,6 +10,11 @@ public sealed record MpvStartOptions
     /// <summary>嵌入目标窗口句柄，作为 <c>--wid</c> 传入。</summary>
     public required long HostWindowHandle { get; init; }
 
+    /// <summary>截图文件名规则，取用户 mpv 配置里的值；为空时用 mpv 自己的默认。</summary>
+    public string? ScreenshotTemplate { get; init; }
+
+    public string? ScreenshotFormat { get; init; }
+
     public IReadOnlyList<string> ExtraArguments { get; init; } = [];
 }
 
@@ -101,6 +106,16 @@ public sealed class MpvProcess : IDisposable
         yield return "--idle=yes";
         yield return "--hwdec=no";                     // M0 实测软件解码单步 3ms；硬解留到后续评估
         yield return "--hr-seek=yes";
+
+        if (!string.IsNullOrEmpty(options.ScreenshotTemplate))
+        {
+            yield return "--screenshot-template=" + options.ScreenshotTemplate;
+        }
+
+        if (!string.IsNullOrEmpty(options.ScreenshotFormat))
+        {
+            yield return "--screenshot-format=" + options.ScreenshotFormat;
+        }
 
         foreach (string argument in options.ExtraArguments)
         {

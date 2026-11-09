@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text.Json;
 
 namespace TrophyShots.Player;
@@ -72,9 +73,49 @@ public sealed class MpvPlayer : IAsyncDisposable
     public Task TogglePauseAsync(CancellationToken cancellationToken) =>
         _ipc.CommandAsync(cancellationToken, "cycle", "pause");
 
-    /// <summary>让 mpv 把当前帧按原分辨率存成 PNG。</summary>
-    public Task ScreenshotAsync(string absolutePath, CancellationToken cancellationToken) =>
-        _ipc.CommandAsync(cancellationToken, "screenshot-to-file", absolutePath, "video");
+    /// <summary>
+    /// 让 mpv 按它自己的 <c>screenshot-directory</c> / <c>screenshot-template</c> 截一张原分辨率图，
+    /// 返回实际落盘的文件。文件名由 mpv 决定，所以先看 <paramref name="expectedPath"/>，
+    /// 再退回"目录里最新的那次写入"。
+    /// </summary>
+    public async Task<string?> TakeScreenshotAsync(
+        string screenshotDirectory,
+        string? expectedPath,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(screenshotDirectory);
+        DateTime startedUtc = DateTime.UtcNow.AddSeconds(-2);
+
+        // 目录按当前录像算（默认规则是"录像同目录的 screenshots/"），所以每次截图前重设一次。
+        await _ipc.CommandAsync(cancellationToken, "set_property", "screenshot-directory", screenshotDirectory)
+            .ConfigureAwait(false);
+        await _ipc.CommandAsync(cancellationToken, "screenshot", "video").ConfigureAwait(false);
+
+        if (expectedPath is not null
+            && File.Exists(expectedPath)
+            && File.GetLastWriteTimeUtc(expectedPath) >= startedUtc)
+        {
+            return expectedPath;
+        }
+
+        for (int attempt = 0; attempt < 30; attempt++)
+        {
+            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+
+            FileInfo? newest = new DirectoryInfo(screenshotDirectory)
+                .EnumerateFiles()
+                .Where(file => file.LastWriteTimeUtc >= startedUtc)
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .FirstOrDefault();
+
+            if (newest is not null)
+            {
+                return newest.FullName;
+            }
+        }
+
+        return null;
+    }
 
     public async Task<double?> GetNumberAsync(string property, CancellationToken cancellationToken)
     {

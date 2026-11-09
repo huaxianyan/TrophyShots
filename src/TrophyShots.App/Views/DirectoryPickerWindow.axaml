@@ -1,0 +1,48 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:TrophyShots.App.ViewModels"
+        x:Class="TrophyShots.App.Views.DirectoryPickerWindow"
+        x:DataType="vm:DirectoryPickerViewModel"
+        Title="选择录像目录"
+        Width="760" Height="560"
+        MinWidth="600" MinHeight="420"
+        Background="#12141A"
+        WindowStartupLocation="CenterOwner">
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="16">
+
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto">
+      <ComboBox Grid.Column="0" Width="110" ItemsSource="{Binding Drives}" SelectedItem="{Binding SelectedDrive}" />
+      <TextBox Grid.Column="1" Margin="8,0" Text="{Binding CurrentPath}" PlaceholderText="直接输入路径后回车" />
+      <Button Grid.Column="2" Content="转到" Command="{Binding GoCommand}" Margin="0,0,8,0" />
+      <Button Grid.Column="3" Content="上一级" Command="{Binding UpCommand}" />
+    </Grid>
+
+    <TextBlock Grid.Row="1" Margin="2,10,2,6" FontSize="12" Opacity="0.6"
+               Text="双击文件夹进入；不选子文件夹就表示选中当前目录。" />
+
+    <Border Grid.Row="2" BorderBrush="#262B36" BorderThickness="1" CornerRadius="6">
+      <ListBox x:Name="FolderList"
+               ItemsSource="{Binding Folders}"
+               SelectedItem="{Binding SelectedFolder}"
+               Background="Transparent"
+               Padding="4">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="x:String">
+            <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Border>
+
+    <TextBlock Grid.Row="3" Margin="2,8,2,0" FontSize="12" Foreground="#E8A0A0"
+               Text="{Binding Error}" TextWrapping="Wrap" IsVisible="{Binding Error, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+    <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto" Margin="0,12,0,0">
+      <TextBlock Grid.Column="0" VerticalAlignment="Center" Opacity="0.75"
+                 Text="{Binding SelectionHint}" TextTrimming="CharacterEllipsis" />
+      <Button Grid.Column="1" Margin="0,0,8,0" Content="取消" Click="OnCancel" />
+      <Button Grid.Column="2" Content="选择这个文件夹" Click="OnConfirm" FontWeight="SemiBold" Padding="14,6" />
+    </Grid>
+  </Grid>
+</Window>

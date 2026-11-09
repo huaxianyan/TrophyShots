@@ -2,9 +2,35 @@
 
 ## 当前主线
 
-M1 完成：界面按 `FFXIVSubmarineLedger` 的做法重做成 **Avalonia 12.1.1 + CommunityToolkit.Mvvm**，mpv 通过 `NativeControlHost` 嵌进原生宿主窗口，目录扫描、列表、时间轴、逐帧、截图、自动下一条全部跑通。自检 `basic` 14/14、真实 58 GB 素材探针 5/5、模块测试 17/17 全绿。
+M1 完成：界面按 `FFXIVSubmarineLedger` 的做法用 **Avalonia 12.1.1 + CommunityToolkit.Mvvm**，mpv 通过 `NativeControlHost` 嵌进原生宿主窗口，目录扫描、列表、时间轴、逐帧、截图、自动下一条全部跑通。截图落点与文件名改为跟随用户 mpv 配置（`F:\Video\截图` / `%f`）。自检 `basic` 14/14、真实 58 GB 素材探针 5/5、模块测试 28/28。
+
+选目录默认用系统对话框（MacType 已排除本程序）；被 MacType 注入时会崩在 `gdi32full.dll`，可用 `--picker builtin` 走自带选择器。
 
 下一步 M2：断点续做（读回状态里的位置）、VFR 退化步进、错误汇总报告、快捷键在真机上的手感校验。
+
+## 2026-11-10 M1 收尾：截图规则跟随 mpv 配置，目录选择与 MacType 冲突解决
+
+**背景**：用户实测 M1 后提了两点——截图文件名要按他自己 mpv 的设置来；另外点「选择录像目录…」会直接崩。
+
+**截图规则改为读 mpv 配置**
+
+- 启动时读 `portable_config/mpv.conf`（其次 `%APPDATA%\mpv\mpv.conf`），只取 `screenshot-directory` / `screenshot-template` / `screenshot-format`，其他设置不碰（工具跑 mpv 仍用 `--no-config`，用户的滤镜与脚本不会混进来）。实测读到：`F:\Video\截图`、`%f`、`png`。
+- `%f` / `%F` 的语义由真实 mpv 实测确认（不是猜文档）：`%f` = 带扩展名的文件名，`%F` = 去掉扩展名。用户的 `%f` 产出 `Replay 2026-10-22 00-01-37.mkv.png`。
+- 截图走 mpv 自己的 `screenshot video`（模板、格式、目录都给 mpv），落盘后再核对实际文件名；模板里出现 `%p`/`%n` 这类运行期占位符时无法预计算，改用"目录里最新的写入"定位。
+- 列表的「已完成」用同一份规则判定，所以现在指向 `F:\Video\截图`；没读到 mpv 配置时仍退回 PLAN 里的默认 `<录像目录>/screenshots/<主文件名>.png`。
+- 副作用（用户已知）：所有游戏的截图集中在一个文件夹，同名录像会互相覆盖。
+
+**选目录崩溃：MacType 的 GDI hook**
+
+- 现象：点「选择录像目录…」后进程直接消失，Windows 事件日志 `BEX64`，故障模块 `gdi32full.dll`，异常 `c0000409`，异常偏移 `0x1f211`。
+- 取证：WER 报告的模块列表里有 `MacType64.dll`、`Easyhk64.dll`、`MacType64.Core.dll` —— 与本机 2026-11-01 记的那批 MacType 崩溃同一签名。崩的是 shell 文件夹对话框（用 GDI 画字）；工具自己的界面走 Skia，不受影响。
+- 另一条实测事实：窗口显示后、点按钮前，进程里查不到任何 MacType DLL，它是**跟着对话框一起进来**的。所以"启动时检测注入"不可靠，不能用作预判。
+- 处理：默认仍用系统对话框（用户要求），另加 `--picker system|builtin|auto`；`builtin` 是自带的 Avalonia 目录选择器（回车/双击进目录、可直接粘路径），不经过 shell 对话框。用户把 `TrophyShots.exe` 加进 MacType 排除列表后，系统对话框恢复正常（实测：弹出→取消→无崩溃）。
+- 附带产出：`src/TrophyShots.Core/FolderBrowsing.cs`（列子目录/上一级/磁盘，自带选择器与测试共用）。
+
+**验收**：`dotnet test` 28/28；`--selftest basic` 14/14（截图落盘名 `Replay 2026-10-22 00-01-37.mkv.png`，与 mpv 手动截一致）。
+
+**没做的**：`--hwdec` 仍固定 `no`（用户配置是 `auto-safe`，未跟随）；45 分钟连续处理与内存曲线仍未测。
 
 ## 2026-11-10 M1：Avalonia 界面、目录扫描、列表、时间轴、截图与自动下一条
 

@@ -17,17 +17,31 @@ public partial class MainWindowViewModel : ObservableObject
     private CancellationTokenSource _operation = new();
     private string? _directory;
     private double? _frameRate;
+    private readonly ScreenshotNaming _naming;
+    private readonly string? _mpvConfigDirectory;
 
     public MainWindowViewModel(AppOptions options, AppLogger log)
     {
         _options = options;
         _log = log;
+        _mpvConfigDirectory = MpvConfigReader.ConfigDirectory(options.MpvPath);
+        ScreenshotNaming configured = MpvConfigReader.ReadScreenshotNaming(options.MpvPath) ?? ScreenshotNaming.Default;
+        _naming = configured with
+        {
+            Directory = options.ScreenshotDirectory ?? configured.Directory,
+            Template = options.ScreenshotTemplate ?? configured.Template,
+        };
+        _log.Info($"截图规则：{_naming.Describe()}（配置目录 {_mpvConfigDirectory ?? "未找到"}）");
+
         _player = new MpvPlaybackService(options, log);
         _player.PropertyChanged += OnPlayerPropertyChanged;
     }
 
     /// <summary>选目录的窗口对话框由视图注入，ViewModel 不直接碰 UI 平台。</summary>
     public Func<Task<string?>>? DirectoryPicker { get; set; }
+
+    /// <summary>当前打开的目录（没打开过就是 null），给目录选择器当起始位置。</summary>
+    public string? CurrentDirectory => _directory;
 
     public System.Collections.ObjectModel.ObservableCollection<VideoItemViewModel> Videos { get; } = [];
 
@@ -57,7 +71,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         try
         {
-            await _player.StartAsync(hostHandle, _operation.Token);
+            await _player.StartAsync(hostHandle, _naming, _operation.Token);
             _log.Info($"播放器就绪 pid={_player.ProcessId} host=0x{hostHandle:X}");
             StatusMessage = "播放器已就绪，选择一条录像开始。";
 
@@ -93,17 +107,27 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        string? directory = await DirectoryPicker();
-        if (!string.IsNullOrEmpty(directory))
+        _log.Info("选择目录：打开文件夹对话框");
+        try
         {
-            await OpenDirectoryAsync(directory);
+            string? directory = await DirectoryPicker();
+            _log.Info($"选择目录：返回 {directory ?? "(取消)"}");
+            if (!string.IsNullOrEmpty(directory))
+            {
+                await OpenDirectoryAsync(directory);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"打开文件夹对话框失败：{ex.Message}";
+            _log.Info($"选择目录失败 {ex.GetType().Name}: {ex.Message}");
         }
     }
 
     /// <summary>只打开一个文件（给真实素材的深度定位自检用），不扫描目录。</summary>
     public Task OpenStandaloneAsync(string videoPath)
     {
-        var item = new VideoItemViewModel(videoPath, VideoLibrary.HasScreenshot(videoPath));
+        var item = new VideoItemViewModel(videoPath, IsCompleted(videoPath));
         Videos.Add(item);
         UpdateProgress();
         SelectedVideo = item;
@@ -145,7 +169,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         foreach (string file in files)
         {
-            Videos.Add(new VideoItemViewModel(file, VideoLibrary.HasScreenshot(file)));
+            Videos.Add(new VideoItemViewModel(file, IsCompleted(file)));
         }
 
         UpdateProgress();
@@ -193,6 +217,13 @@ public partial class MainWindowViewModel : ObservableObject
                 throttle.Release();
             }
         }));
+    }
+
+    /// <summary>已完成 = 按当前规则算出来的那张图存在。</summary>
+    private bool IsCompleted(string videoPath)
+    {
+        string? target = _naming.TryResolveTarget(videoPath, _mpvConfigDirectory);
+        return target is not null && File.Exists(target);
     }
 
     private void UpdateProgress()
@@ -345,6 +376,9 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    /// <summary>当前的截图规则与录像规则，自检用来核对落盘位置。</summary>
+    public string? ScreenshotTargetFor(string videoPath) => _naming.TryResolveTarget(videoPath, _mpvConfigDirectory);
+
     /// <summary>自检用：直接读 mpv 的估算帧号。</summary>
     public async Task<double?> ReadFrameAsync(CancellationToken cancellationToken) =>
         IsReady ? await _player.GetNumberAsync("estimated-frame-number", cancellationToken) : null;
@@ -365,29 +399,29 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         VideoItemViewModel item = SelectedVideo;
-        string path = VideoLibrary.ScreenshotPathFor(item.FullPath);
+        string directory = _naming.ResolveDirectoryFor(item.FullPath, _mpvConfigDirectory);
+        string? expected = _naming.TryResolveTarget(item.FullPath, _mpvConfigDirectory);
         CancellationToken cancellationToken = _operation.Token;
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            await _player.ScreenshotAsync(path, cancellationToken);
+            string? saved = await _player.TakeScreenshotAsync(directory, expected, cancellationToken);
 
-            if (!File.Exists(path))
+            if (saved is null)
             {
-                StatusMessage = $"截图没有写出来，检查「{Path.GetDirectoryName(path)}」是否可写。";
-                _log.Info($"截图未落盘 {path}");
+                StatusMessage = $"截图没有写出来，检查「{directory}」是否可写。";
+                _log.Info($"截图未落盘 directory={directory} expected={expected ?? "(模板算不出)"}");
                 return;
             }
 
             item.Completed = true;
             UpdateProgress();
             SaveState(item, PositionSeconds);
-            _log.Info($"截图 {path} bytes={new FileInfo(path).Length} frame={FrameText}");
+            _log.Info($"截图 {saved} bytes={new FileInfo(saved).Length} frame={FrameText}");
 
             StatusMessage = advance
-                ? $"已保存 {Path.GetFileName(path)}，进入下一条。"
-                : $"已覆盖 {Path.GetFileName(path)}。";
+                ? $"已保存 {Path.GetFileName(saved)}，进入下一条。"
+                : $"已覆盖 {Path.GetFileName(saved)}。";
 
             if (advance)
             {
@@ -400,7 +434,7 @@ public partial class MainWindowViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"截图失败：{ex.Message}";
-            _log.Info($"截图失败 {path} {ex.GetType().Name}: {ex.Message}");
+            _log.Info($"截图失败 directory={directory} {ex.GetType().Name}: {ex.Message}");
         }
     }
 

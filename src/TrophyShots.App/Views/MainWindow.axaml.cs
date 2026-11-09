@@ -61,6 +61,11 @@ public partial class MainWindow : Window
 
     private async void OnOpened(object? sender, EventArgs e)
     {
+        // 窗口真正显示后再探一次：MacType 的注入不是进程一启动就完成的。
+        _ = Task.Delay(1500).ContinueWith(
+            _ => App.Log.Info($"窗口已显示：MacType 已注入={MacTypeDetector.IsInjected()}"),
+            TaskScheduler.Default);
+
         if (_viewModel is null || App.Options.SelfTest is null)
         {
             return;
@@ -69,16 +74,44 @@ public partial class MainWindow : Window
         await SelfTestRunner.RunAsync(this, _viewModel, App.Options, App.Log);
     }
 
+    /// <summary>
+    /// 选目录。默认用系统文件夹对话框；但本机 MacType 的 GDI hook 会让那个对话框把进程
+    /// 崩在 gdi32full.dll（2026-11-10 实测），所以检测到被注入时自动改用内置选择器。
+    /// </summary>
     private async Task<string?> PickDirectoryAsync()
     {
-        IReadOnlyList<IStorageFolder> folders = await StorageProvider.OpenFolderPickerAsync(
-            new FolderPickerOpenOptions
-            {
-                Title = "选择装着录像的目录",
-                AllowMultiple = false,
-            });
+        if (_viewModel is null)
+        {
+            return null;
+        }
 
-        return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        string mode = App.Options.Picker;
+        bool injected = MacTypeDetector.IsInjected();
+        bool useSystemDialog = mode switch
+        {
+            "system" => true,
+            "builtin" => false,
+            _ => !injected,
+        };
+
+        App.Log.Info($"选目录：对话框={(useSystemDialog ? "system" : "builtin")} 已注入MacType={injected}");
+        if (useSystemDialog)
+        {
+            try
+            {
+                IReadOnlyList<IStorageFolder> folders = await StorageProvider.OpenFolderPickerAsync(
+                    new FolderPickerOpenOptions { Title = "选择装着录像的目录", AllowMultiple = false });
+
+                return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+            }
+            catch (Exception ex)
+            {
+                App.Log.Info($"系统对话框失败，改用内置选择器 {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        var picker = new DirectoryPickerWindow(_viewModel.CurrentDirectory);
+        return await picker.ShowDialog<string?>(this);
     }
 
     // ---------------- 时间轴拖动 ----------------

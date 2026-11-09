@@ -16,6 +16,21 @@ public sealed class AppOptions
     /// <summary>自检时把窗口挪到屏幕外，不遮挡、不抢焦点。</summary>
     public bool Offscreen { get; private init; }
 
+    /// <summary>
+    /// 渲染后端：<c>software</c>（默认）或 <c>gpu</c>。
+    /// 本机装了 RivaTuner Statistics Server，它的 hook 会把走 D3D 的进程弄崩（gdi32full BEX64），
+    /// 所以默认走软件渲染；视频本身由 mpv 在自己的窗口里画，不经过这条路径。
+    /// </summary>
+    public string RenderMode { get; private init; } = "software";
+
+    /// <summary>选目录用哪套对话框：<c>auto</c>（默认）、<c>system</c>、<c>builtin</c>。</summary>
+    public string Picker { get; private init; } = "auto";
+
+    /// <summary>开发/自检用的截图规则覆盖；正常使用从 mpv 配置读。</summary>
+    public string? ScreenshotDirectory { get; private init; }
+
+    public string? ScreenshotTemplate { get; private init; }
+
     public static AppOptions Parse(string[] args)
     {
         string mpvPath = ResolveBundled("mpv", "mpv.exe");
@@ -26,6 +41,10 @@ public sealed class AppOptions
         string? selfTest = null;
         string? evidence = null;
         bool offscreen = false;
+        string renderMode = "software";
+        string picker = "auto";
+        string? screenshotDirectory = null;
+        string? screenshotTemplate = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -57,6 +76,19 @@ public sealed class AppOptions
                 case "--offscreen":
                     offscreen = true;
                     break;
+                case "--render":
+                    renderMode = Next();
+                    break;
+                case "--picker":
+                    picker = Next();
+                    break;
+                case "--screenshot-dir":
+                    // 相对路径按当前工作目录补全，避免被当成"相对录像目录"。
+                    screenshotDirectory = Path.GetFullPath(Next());
+                    break;
+                case "--screenshot-template":
+                    screenshotTemplate = Next();
+                    break;
             }
         }
 
@@ -70,6 +102,10 @@ public sealed class AppOptions
             SelfTest = selfTest,
             EvidenceDirectory = evidence,
             Offscreen = offscreen,
+            RenderMode = renderMode,
+            Picker = picker,
+            ScreenshotDirectory = screenshotDirectory,
+            ScreenshotTemplate = screenshotTemplate,
         };
     }
 
