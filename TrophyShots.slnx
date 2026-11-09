@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TrophyShots.App/TrophyShots.App.csproj" />
+    <Project Path="src/TrophyShots.Core/TrophyShots.Core.csproj" />
+    <Project Path="src/TrophyShots.Player/TrophyShots.Player.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TrophyShots.Core.Tests/TrophyShots.Core.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <Version>0.1.0</Version>
+    <Authors>huaxianyan</Authors>
+    <Copyright>Copyright © 2026 huaxianyan and contributors</Copyright>
+    <RepositoryUrl>https://github.com/huaxianyan/TrophyShots</RepositoryUrl>
+  </PropertyGroup>
+</Project>

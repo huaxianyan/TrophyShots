@@ -2,54 +2,77 @@
 
 ## 当前主线
 
-M0（mpv 嵌入 + IPC）已完成：WPF/.NET 8 原生窗口用 `--wid` 嵌入 mpv，JSON IPC 打通逐帧、截图、缩放跟随、键盘与退出清理，真实 1440p60 素材与合成测试片各 14/14 自检通过。框架选型定稿为 WPF，不再考虑 JavaFX / Qt。
+M1 完成：界面按 `FFXIVSubmarineLedger` 的做法重做成 **Avalonia 12.1.1 + CommunityToolkit.Mvvm**，mpv 通过 `NativeControlHost` 嵌进原生宿主窗口，目录扫描、列表、时间轴、逐帧、截图、自动下一条全部跑通。自检 `basic` 14/14、真实 58 GB 素材探针 5/5、模块测试 17/17 全绿。
 
-下一步 M1：目录扫描 + 列表 + 时间轴 + ±1 帧 + 截图落盘 + 自动下一条。开工前先把 `--selftest` 固化成可回归的验收命令（见 `AGENTS.md` 文档索引）。
+下一步 M2：断点续做（读回状态里的位置）、VFR 退化步进、错误汇总报告、快捷键在真机上的手感校验。
+
+## 2026-11-10 M1：Avalonia 界面、目录扫描、列表、时间轴、截图与自动下一条
+
+**本轮目标**：把 M0 验证过的架构落成能用的界面，前端按用户要求"直接用框架"——对齐 `FFXIVSubmarineLedger` 的技术基线（Avalonia、MVVM、分层、模块测试）。
+
+**结构**（`TrophyShots.slnx`，全部 `net10.0`）
+
+- `src/TrophyShots.Core`：目录扫描、自然排序、`screenshots/` 与 `.state.json` 的路径约定、状态读写。纯逻辑，无 UI、无进程。
+- `src/TrophyShots.Player`：mpv 子进程与 Job object、命名管道 JSON IPC、逐帧（含"每步确认 time-pos"）、ffprobe 元数据、`PrintWindow` 抓屏；另有 `VideoHostWindow`（交给 `--wid` 的宿主子窗口，负责跟随尺寸与焦点回弹）。
+- `src/TrophyShots.App`：Avalonia 12.1.1 + CommunityToolkit.Mvvm，`MainWindowViewModel` 持有列表与状态，`MpvHostControl : NativeControlHost` 把 mpv 画面塞进布局。
+- `tests/TrophyShots.Core.Tests`：xunit.v3，17 个用例（自然排序、扩展名过滤、截图路径、状态读写与坏文件自愈）。
+
+**功能**：左侧列表（文件名 / 时长 / 完成状态）、顶部 `已处理 x / n` 与目录、时间轴滑块（松手才定位）、±1/±10 帧、±1 秒、播放暂停、截图并下一条、重截当前、状态栏提示；快捷键 ←/→、Shift+←/→、`,`/`.`、空格、`S`/`Enter`、`Backspace`、↑/↓。
+
+**验收证据（2026-11-10）**
+
+- `--selftest basic`（`--offscreen`，窗口在屏幕外）：14/14 通过。含列表条数与自然序、首帧、视频区抓屏非黑 86.7%、+1 帧、1 秒处帧 60、截图落盘 640×360、列表标记完成、进度文本、自动切下一条、状态文件、快捷键映射、焦点回弹。
+- `--selftest probe`（真实素材 `F:\Video\FF共鸣\Replay 2026-10-22 00-01-37.mkv`，只读）：5/5 通过。首帧 0.7–2.1 s，定位到 150 秒后帧号正好 9000（60 fps），+1 帧生效，回到 00:00.000。
+- `dotnet test`：17/17。真实 1440p60 视频区抓屏非黑 8.8%（夜间素材，正常）。
+- 退出后无残留 `mpv` 进程（Job object 兜底仍在）。
+
+**新踩的坑**
+
+1. **Avalonia 的 `NativeControlHost` 需要 `app.manifest` 里声明 `supportedOS`**，缺了会直接抛「Unable to create child window for native control host」。加 `<compatibility>` 段即可，和 DPI 声明写在同一个清单里。
+2. `NativeControlHost.CreateNativeControlCore` 拿到的 parent 是 Avalonia 自己建的 wrapper 窗口，我们的宿主窗口要作为它的子窗口创建，尺寸按 `RenderScaling` 换算成设备像素，否则 125% 缩放下视频只占一角。
+3. 点视频区会让我们自己的宿主窗口拿到焦点（mpv 的窗口是 disabled + `WS_EX_NOACTIVATE`），所以在 `WM_SETFOCUS` 里立刻 `SetFocus(GetAncestor(GA_ROOT))` 弹回主窗口，否则按键全丢。
+4. 自检不能靠"投递 WM_KEYDOWN"验证快捷键：自检窗口不激活，框架按未激活丢掉按键。改成直接调用 `MainWindow.HandleShortcut`（真实映射代码）+ 单独验证焦点回弹；操作系统到 Avalonia 的那一跳留给真机人工确认。
+5. `xunit.v3` 没有隐式 using，测试文件要自己 `using Xunit;`；.NET 10 的 `dotnet new sln` 生成的是 `TrophyShots.slnx`。
+
+**边界（本轮未验证）**
+
+- 没做 45 分钟连续处理与长时间内存曲线（PLAN §9.6）。
+- 没有 VFR 的实际退化步进，只在列表里标出"非常数帧率"。
+- 状态文件只写不读回位置（选择文件用的 `LastFileName` 已生效），续做位置留 M2。
+- 没测损坏文件跳过与末尾汇总报告（M2 的错误处理项）。
+- 未打包，未做干净机器验证（M3）。
+
+**下一步**
+
+1. M2：读回 `LastPositionSeconds` → 打开即定位到断点；VFR 按时间戳步进；错误文件标红跳过 + 末尾汇总。
+2. 真机上手工过一遍快捷键手感（自检只覆盖到映射层）。
+3. 决定 mpv 与 ffprobe 的随包分发形态（M3 前把版本固定下来）。
 
 ## 2026-11-10 M0：用 WPF 嵌 mpv、打通 IPC，验证渲染、键盘与退出
 
 **目标**：验证 `docs/PLAN.md` §5 的架构假设——原生窗口嵌 mpv、控制走 IPC——是否成立，再决定 UI 框架。
 
-**定稿结论**
+**当时的结论（框架部分已被 M1 取代，架构结论仍有效）**
 
-- UI 框架：**C# / WPF / `net8.0-windows`**（本机 SDK 8.0.414 可用，零 NuGet 依赖）。嵌窗用 `HwndHost` 自建宿主窗口，再把它交给 mpv 的 `--wid`。
-- 视频内核：mpv 0.32.0（Scoop）。控制全部走 `--input-ipc-server` 的命名管道 JSON IPC，mpv 侧关掉自带键位与 OSC。
-- 代码在 `src/TrophyShots/`：`Mpv/MpvProcess`（拉起与退出）、`Mpv/MpvIpc`（管道协议）、`Mpv/MpvHost`（HwndHost）、`Capture/WindowCapture`（抓屏取证）。
+- 视频内核确认：mpv 0.32.0（Scoop），`--wid` 嵌入，控制全走 `--input-ipc-server` 的命名管道 JSON IPC，mpv 侧关掉自带键位与 OSC。
+- 当时用 C#/WPF 验证通过；M1 按用户要求换成 Avalonia，`--wid` 与 IPC 的做法原样沿用，`MpvProcess` / `MpvIpc` 代码直接搬到 `src/TrophyShots.Player`。
+- M0 的验证方式：`--selftest` 在进程内驱动真实代码路径，窗口放屏幕外，不抢前台窗口、不动鼠标。
 
-**验证方式**：`--offscreen --selftest basic|focus|hold` 在进程内驱动真实代码路径，窗口放屏幕外，不抢前台窗口、不动鼠标。合成素材用烧帧号的 `testsrc2` 60fps 片（命令见 `AGENTS.md`），真实素材用 `F:\Video\FF共鸣` 里的 2560×1440 60fps mkv。
+**M0 实测证据（当时的 WPF 宿主，两个素材各 14/14）**
 
-**实测证据（2026-11-10，两个素材各一轮，均为 14/14 PASS）**
-
-- 解码元数据：合成片 640×360 / 60fps，真实片 2560×1440 / 60fps，`container-fps` 都是 60.000004。
-- 渲染：`PrintWindow(PW_RENDERFULLCONTENT)` 同时抓整窗与 mpv 子窗口，视频区非黑比例 96.6%（合成片）/ 9.9%（真实夜间素材），画面确实在图。
-- 帧身份用 **mpv 自己截图的 SHA256** 比对，不依赖估算帧号：真实片 frame 1800 → +1 → 1801（哈希变）→ −1 → 1800（哈希完全一致）；+10 → 1810 → −10 → 1800（哈希一致）。
+- 解码元数据：合成片 640×360 / 60fps，真实片 2560×1440 / 60fps。
+- 帧身份用 **mpv 自己截图的 SHA256** 比对：真实片 frame 1800 → +1 → 1801（哈希变）→ −1 → 1800（哈希完全一致）；+10 → 1810 → −10 → 1800（一致）。
 - 单步延迟：命令发出到 `time-pos` 变化 2.7–4.4 ms（PLAN §9.7 要求 < 100 ms）。
-- 截图：`screenshot-to-file <绝对路径> video` 落原分辨率 PNG，合成片 640×360 / 66 KB，真实片 2560×1440 / 1.17 MB。
-- 缩放：窗口 1306×722 → 986×602 DIP 时 `osd-dimensions` 从 1632×903 跟到 1232×753，画面继续正常渲染。
-- 键盘：activate 后给主窗口投递 `WM_KEYDOWN`，WPF `PreviewKeyDown` 接住并走 IPC，帧 11 → 12（29–41 ms 含确认帧号）；focus 模式合计 18/18 PASS。
-- 退出：IPC `quit` 后 mpv 88–162 ms 退出；`Stop-Process -Force` 强杀主进程后 mpv 立即归零（Job object `KILL_ON_JOB_CLOSE` 兜底）。两种路径都没有孤儿进程。
+- 缩放：窗口 1306×722 → 986×602 DIP 时 `osd-dimensions` 1632×903 → 1232×753 跟随。
+- 退出：IPC `quit` 后 88–162 ms 退出；`Stop-Process -Force` 强杀主进程后 mpv 立即归零。
 
-**本轮踩到并已修掉的三个坑**
+**M0 修掉的三个坑（现在仍在用）**
 
-1. **连发 `frame-back-step` 会丢请求**：一次发 10 条只退了 1 帧，`estimated-frame-number` 停在 1809。改成每步确认 `time-pos` 真的变了再发下一条，10 步往返即精确。代价是 10 步约 1.26 s，M2 应改成一次精确 seek 而不是循环回退。
-2. **mpv 的工作目录是它自己所在目录**：传相对路径截图会写到 mpv 目录下且失败。所有交给 mpv 的路径必须先 `Path.GetFullPath`。
-3. **首帧之前属性是 `unavailable`**：`width`、`estimated-frame-number` 在首帧渲染前读不到，必须先轮询等首帧，否则整条链路读到 NaN。
+1. 连发 `frame-back-step` 会丢请求（10 条只退 1 帧）→ 改逐步确认 `time-pos`。
+2. mpv 的工作目录是它自己所在目录，相对路径会写错地方 → 交给 mpv 的路径一律转绝对。
+3. 首帧之前 `width` / `estimated-frame-number` 是 `unavailable` → 先等首帧再读。
 
-另外记两条与窗口有关的事实：mpv 0.32 的嵌入窗口是 **disabled + `WS_EX_NOACTIVATE`**，点击视频区的焦点其实落在我们的宿主窗口上（所以要在 `WM_KILLFOCUS` 时把焦点抢回主窗口，否则按键全丢）；`HwndHost` 必须重写 `MeasureOverride` 才会随窗口伸缩。
-
-**边界（本轮没验证）**
-
-- 全程 `--hwdec=no`，硬解路径未测（软件解码在 1440p60 上单步只要 3 ms，是否要开硬解留到 M1 定）。
-- 只测了单个文件的加载与步进；45 分钟级连续处理、帧缓冲释放、内存增长未测。
-- PLAN §9.1 的"烧帧号人工目视核对"没做（自动化里不读图）。本轮用截图哈希证明了帧身份，视觉级验收留到 M1 交付时一起做。
-- 未做打包（M3）、未测 VFR 退化路径、未接 ffprobe。
-- 未建 GitHub 远端，只有本地提交。
-
-**下一步**
-
-1. M1：目录扫描 + 列表 + 打开文件 + 时间轴 + ±1 帧 + 截图 + 自动下一条。
-2. 把 `--selftest` 变成固定回归命令，M1 起每次改动都跑一遍（`--offscreen` 保证不打扰）。
-3. 决定 mpv 版本策略：现在用 Scoop 的 0.32.0，M3 自带时固定版本并写进 `AGENTS.md`。
+**当时未覆盖**：硬解（全程 `--hwdec=no`）、多文件连续处理、打包、烧帧号人工目视核对、GitHub 远端。
 
 ## 2026-11-10 规划完成，等待开工
 
@@ -66,8 +89,3 @@ M0（mpv 嵌入 + IPC）已完成：WPF/.NET 8 原生窗口用 `--wid` 嵌入 mp
 - ffmpeg 精确 seek 取单帧：1.94 s（→ 不能每次步进 spawn 进程）
 - ffprobe 全量列举 PTS：72 s（→ 不能逐文件建全量帧索引）
 - ffprobe 读元数据：毫秒级
-
-**技术方向**（M0 已验证，见上一条）
-
-- 视频内核 mpv，`--wid` 嵌入原生窗口，JSON IPC 控制逐帧与截图。
-- UI 框架定为 WPF / .NET 8。
