@@ -62,6 +62,18 @@ public partial class MainWindow : Window
 
     private async void OnOpened(object? sender, EventArgs e)
     {
+        if (_viewModel is not null)
+        {
+            if (App.Options.Video is { } standalone)
+            {
+                await _viewModel.OpenStandaloneAsync(standalone);
+            }
+            else if (App.Options.Directory is { } directory)
+            {
+                await _viewModel.OpenDirectoryAsync(directory);
+            }
+        }
+
         // 窗口真正显示后再探一次：MacType 的注入不是进程一启动就完成的。
         _ = Task.Delay(1500).ContinueWith(
             _ => App.Log.Info($"窗口已显示：MacType 已注入={MacTypeDetector.IsInjected()}"),

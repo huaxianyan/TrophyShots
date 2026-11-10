@@ -18,6 +18,8 @@ public partial class MainWindowViewModel : ObservableObject
     private CancellationTokenSource _scan = new();
     private string? _directory;
     private double? _frameRate;
+    private readonly TaskCompletionSource<bool> _playerStarted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ScreenshotNaming _naming;
     private readonly string? _mpvConfigDirectory;
     private IntPtr _hostHandle;
@@ -67,10 +69,18 @@ public partial class MainWindowViewModel : ObservableObject
     public event Action<LibrarySummary>? SummaryRequested;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasSelection))]
+    [NotifyPropertyChangedFor(nameof(PlaybackTitle))]
+    [NotifyPropertyChangedFor(nameof(PlaybackSubtitle))]
     private VideoItemViewModel? _selectedVideo;
 
-    public bool HasSelection => SelectedVideo is not null;
+    /// <summary>有录像列表时才把 mpv 的原生窗口放出来，避免开机就是一大块黑。</summary>
+    public bool IsPlayerVisible => Videos.Count > 0;
+
+    public string PlaybackTitle => SelectedVideo?.FileName ?? "还没有打开录像";
+
+    public string PlaybackSubtitle => SelectedVideo is null
+        ? "选目录 → 挑录像 → 逐帧微调 → 截图"
+        : $"{(IsTimeBasedStepping ? "非常帧率：按时间步进" : "逐帧：← / →")}　·　{PositionText}　·　{FrameText}";
 
     /// <summary>拖动时间轴期间不要用播放器上报的位置覆盖滑块。</summary>
     public bool IsScrubbing { get; set; }
@@ -86,14 +96,12 @@ public partial class MainWindowViewModel : ObservableObject
             await _player.StartAsync(hostHandle, _naming, _operation.Token);
             _log.Info($"播放器就绪 pid={_player.ProcessId} host=0x{hostHandle:X}");
             StatusMessage = "播放器已就绪，选择一条录像开始。";
+            _playerStarted.TrySetResult(true);
 
-            if (_options.Video is { } standalone)
+            // 选录像可能早于播放器就绪（列表先出现），这里补开。
+            if (SelectedVideo is { } pending && !IsReady)
             {
-                await OpenStandaloneAsync(standalone);
-            }
-            else if (_options.Directory is { } initial)
-            {
-                await OpenDirectoryAsync(initial);
+                await OpenVideoAtAsync(pending, null);
             }
         }
         catch (Exception ex)
@@ -143,6 +151,7 @@ public partial class MainWindowViewModel : ObservableObject
         var item = new VideoItemViewModel(videoPath, IsCompleted(videoPath));
         Videos.Add(item);
         UpdateProgress();
+        OnPropertyChanged(nameof(IsPlayerVisible));
         SelectedVideo = item;
         return Task.CompletedTask;
     }
@@ -193,6 +202,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         UpdateProgress();
+        OnPropertyChanged(nameof(IsPlayerVisible));
 
         if (Videos.Count == 0)
         {
@@ -265,11 +275,19 @@ public partial class MainWindowViewModel : ObservableObject
 
     partial void OnSelectedVideoChanged(VideoItemViewModel? value)
     {
+        OnPropertyChanged(nameof(PlaybackSubtitle));
+
         if (value is not null)
         {
             _ = OpenVideoAsync(value);
         }
     }
+
+    partial void OnPositionTextChanged(string value) => OnPropertyChanged(nameof(PlaybackSubtitle));
+
+    partial void OnFrameTextChanged(string value) => OnPropertyChanged(nameof(PlaybackSubtitle));
+
+    partial void OnIsTimeBasedSteppingChanged(bool value) => OnPropertyChanged(nameof(PlaybackSubtitle));
 
     private Task OpenVideoAsync(VideoItemViewModel item) => OpenVideoAtAsync(item, null);
 
@@ -279,6 +297,7 @@ public partial class MainWindowViewModel : ObservableObject
         CancellationToken cancellationToken = BeginOperation();
         try
         {
+            await _playerStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             IsReady = false;
             FrameText = "帧 —";
             PositionText = "加载中…";

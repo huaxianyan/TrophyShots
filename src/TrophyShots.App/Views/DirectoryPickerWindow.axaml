@@ -6,7 +6,6 @@
         Title="选择录像目录"
         Width="760" Height="560"
         MinWidth="600" MinHeight="420"
-        Background="#12141A"
         WindowStartupLocation="CenterOwner">
 
   <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="16">
@@ -21,7 +20,7 @@
     <TextBlock Grid.Row="1" Margin="2,10,2,6" FontSize="12" Opacity="0.6"
                Text="双击文件夹进入；不选子文件夹就表示选中当前目录。" />
 
-    <Border Grid.Row="2" BorderBrush="#262B36" BorderThickness="1" CornerRadius="6">
+    <Border Grid.Row="2" BorderBrush="#40808080" BorderThickness="1" CornerRadius="6">
       <ListBox x:Name="FolderList"
                ItemsSource="{Binding Folders}"
                SelectedItem="{Binding SelectedFolder}"

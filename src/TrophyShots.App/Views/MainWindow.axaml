@@ -5,104 +5,152 @@
         x:Class="TrophyShots.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="TrophyShots"
-        Width="1440" Height="900"
-        MinWidth="1100" MinHeight="700"
-        Background="#12141A">
+        Width="1280" Height="820"
+        MinWidth="1040" MinHeight="660">
 
+  <!-- 视觉沿用 FFXIVSubmarineLedger：跟随系统主题、半透明色块、卡片式分区，不自定义暗色底。 -->
   <Window.Styles>
-    <Style Selector="Button.tool">
-      <Setter Property="MinWidth" Value="76" />
-      <Setter Property="Padding" Value="12,7" />
-    </Style>
-    <Style Selector="Button.primary">
-      <Setter Property="Padding" Value="16,7" />
+    <Style Selector="TextBlock.brand">
+      <Setter Property="FontSize" Value="18" />
       <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.section-title">
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Opacity" Value="0.6" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Padding" Value="12" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="#40808080" />
+      <Setter Property="Background" Value="#0A808080" />
+    </Style>
+    <Style Selector="Button.nav">
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="14,9" />
+      <Setter Property="Margin" Value="0,2" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="Button.nav:pointerover">
+      <Setter Property="Background" Value="#16808080" />
+    </Style>
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="#285B8DEF" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.accent:pointerover">
+      <Setter Property="Background" Value="#395B8DEF" />
     </Style>
   </Window.Styles>
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid ColumnDefinitions="320,*" RowDefinitions="*,Auto">
 
-    <!-- 顶部：目录与进度 -->
-    <Border Grid.Row="0" Padding="14,10" Background="#191C24" BorderBrush="#262B36" BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto">
-        <Button Grid.Column="0" Classes="tool" Content="选择录像目录…" Command="{Binding ChooseDirectoryCommand}" />
-        <Button Grid.Column="1" Classes="tool" Margin="8,0,0,0" Content="重新扫描" Command="{Binding RescanCommand}" />
-        <Button Grid.Column="2" Classes="tool" Margin="8,0,0,0" Content="查看汇总" Command="{Binding ShowSummaryCommand}" />
-        <Button Grid.Column="3" Classes="tool" Margin="8,0,0,0" Content="重启播放器" Command="{Binding RestartPlayerCommand}" />
-        <TextBlock Grid.Column="4" Margin="16,0" VerticalAlignment="Center"
-                   Text="{Binding DirectoryPath}" Opacity="0.7" TextTrimming="CharacterEllipsis" />
-        <TextBlock Grid.Column="5" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding ProgressText}" />
+    <!-- 左侧：目录、录像列表、进度 -->
+    <Border Grid.RowSpan="2" Background="#0E808080" BorderBrush="#40808080" BorderThickness="0,0,1,0">
+      <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+
+        <StackPanel Margin="8,8,8,18" Spacing="4">
+          <TextBlock Classes="brand" Text="TrophyShots" />
+          <TextBlock Classes="caption" Text="奖杯录像逐帧挑图" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Spacing="2">
+          <Button Classes="nav accent" Content="选择录像目录…" Command="{Binding ChooseDirectoryCommand}" />
+          <Button Classes="nav" Content="重新扫描" Command="{Binding RescanCommand}" />
+          <Button Classes="nav" Content="查看汇总" Command="{Binding ShowSummaryCommand}" />
+          <Button Classes="nav" Content="重启播放器" Command="{Binding RestartPlayerCommand}" />
+          <TextBlock Classes="caption" Margin="16,10,8,0" Text="{Binding DirectoryPath}" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border Grid.Row="2" Classes="card" Margin="0,14,0,10" Padding="4">
+          <ListBox x:Name="VideoList"
+                   ItemsSource="{Binding Videos}"
+                   SelectedItem="{Binding SelectedVideo}"
+                   Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:VideoItemViewModel">
+                <Grid ColumnDefinitions="*,Auto" Margin="4,3">
+                  <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Classes="caption" Text="{Binding DetailText}" />
+                  </StackPanel>
+                  <Border Grid.Column="1" VerticalAlignment="Center" CornerRadius="9" Padding="8,2"
+                          Background="#16808080">
+                    <TextBlock Text="{Binding StatusText}" FontSize="11" />
+                  </Border>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Border>
+
+        <TextBlock Grid.Row="3" Classes="caption" Text="{Binding ProgressText}" />
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" ColumnDefinitions="360,*">
+    <!-- 右侧：播放器与操作 -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="18,14,18,10">
 
-      <!-- 左：录像列表 -->
-      <Border Grid.Column="0" BorderBrush="#262B36" BorderThickness="0,0,1,0">
-        <ListBox x:Name="VideoList"
-                 ItemsSource="{Binding Videos}"
-                 SelectedItem="{Binding SelectedVideo}"
-                 Background="Transparent"
-                 Padding="6">
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="vm:VideoItemViewModel">
-              <Grid ColumnDefinitions="*,Auto" Margin="4,3">
-                <StackPanel Grid.Column="0" Spacing="2">
-                  <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Text="{Binding DetailText}" FontSize="11" Opacity="0.55" />
-                </StackPanel>
-                <Border Grid.Column="1" VerticalAlignment="Center" CornerRadius="9" Padding="8,2"
-                        Background="#22FFFFFF">
-                  <TextBlock Text="{Binding StatusText}" FontSize="11" />
-                </Border>
-              </Grid>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
+      <StackPanel Grid.Row="0" Spacing="3" Margin="2,0,0,10">
+        <TextBlock Classes="section-title" Text="{Binding PlaybackTitle}" TextTrimming="CharacterEllipsis" />
+        <TextBlock Classes="caption" Text="{Binding PlaybackSubtitle}" TextTrimming="CharacterEllipsis" />
+      </StackPanel>
+
+      <Border Grid.Row="1" Classes="card" Padding="0" ClipToBounds="True">
+        <Grid>
+          <Border Background="Black" IsVisible="{Binding IsPlayerVisible}" />
+          <controls:MpvHostControl x:Name="VideoHost" IsVisible="{Binding IsPlayerVisible}" />
+
+          <StackPanel IsVisible="{Binding !IsPlayerVisible}" VerticalAlignment="Center"
+                      HorizontalAlignment="Center" Spacing="10" Margin="32">
+            <TextBlock Classes="section-title" HorizontalAlignment="Center" Text="先选一个装着录像的目录" />
+            <TextBlock Classes="caption" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
+                       Text="打开后左边是录像列表，右边是画面。&#10;← / → 逐帧　Shift + ← / → 十帧　, / . 一秒　空格 播放　S 截图并下一条" />
+          </StackPanel>
+        </Grid>
       </Border>
 
-      <!-- 右：播放器与操作 -->
-      <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto">
+      <Grid Grid.Row="2" RowDefinitions="Auto,Auto" Margin="0,12,0,0">
 
-        <Border Grid.Row="0" Background="Black">
-          <controls:MpvHostControl x:Name="VideoHost" />
-        </Border>
-
-        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="16,12,16,6">
-          <Slider x:Name="Timeline" Grid.Column="0"
-                  Minimum="0"
-                  Maximum="{Binding DurationSeconds}"
-                  Value="{Binding PositionSeconds, Mode=OneWay}"
-                  VerticalAlignment="Center" />
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+          <Slider x:Name="Timeline" Grid.Column="0" Minimum="0" VerticalAlignment="Center"
+                  Maximum="{Binding DurationSeconds}" Value="{Binding PositionSeconds, Mode=OneWay}" />
           <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
             <TextBlock Text="{Binding PositionText}" FontFamily="Consolas, Microsoft YaHei UI" />
-            <TextBlock Text="{Binding FrameText}" FontSize="11" Opacity="0.6" FontFamily="Consolas, Microsoft YaHei UI" />
-            <TextBlock Text="非常帧率：按时间步进" FontSize="11" Foreground="#E8C07A"
-                       IsVisible="{Binding IsTimeBasedStepping}" />
+            <TextBlock Classes="caption" Text="{Binding FrameText}" FontFamily="Consolas, Microsoft YaHei UI" />
           </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="16,0,16,14">
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
           <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
-            <Button Classes="tool" Content="−10 帧" Command="{Binding StepBackwardTenCommand}" />
-            <Button Classes="tool" Content="−1 帧" Command="{Binding StepBackwardCommand}" />
-            <Button Classes="tool" Content="播放 / 暂停" Command="{Binding TogglePlayCommand}" />
-            <Button Classes="tool" Content="+1 帧" Command="{Binding StepForwardCommand}" />
-            <Button Classes="tool" Content="+10 帧" Command="{Binding StepForwardTenCommand}" />
-            <Button Classes="tool" Content="−1 秒" Command="{Binding SecondBackwardCommand}" />
-            <Button Classes="tool" Content="+1 秒" Command="{Binding SecondForwardCommand}" />
+            <Button Content="−10 帧" Command="{Binding StepBackwardTenCommand}" />
+            <Button Content="−1 帧" Command="{Binding StepBackwardCommand}" />
+            <Button Content="播放 / 暂停" Command="{Binding TogglePlayCommand}" />
+            <Button Content="+1 帧" Command="{Binding StepForwardCommand}" />
+            <Button Content="+10 帧" Command="{Binding StepForwardTenCommand}" />
+            <Button Content="−1 秒" Command="{Binding SecondBackwardCommand}" />
+            <Button Content="+1 秒" Command="{Binding SecondForwardCommand}" />
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-            <Button Classes="tool" Content="重截当前" Command="{Binding RecaptureCommand}" />
-            <Button Classes="primary" Content="截图并下一条" Command="{Binding CaptureCommand}" />
+            <Button Content="重截当前" Command="{Binding RecaptureCommand}" />
+            <Button Classes="accent" Content="截图并下一条" Command="{Binding CaptureCommand}" />
           </StackPanel>
         </Grid>
       </Grid>
     </Grid>
 
-    <!-- 底部：状态 -->
-    <Border Grid.Row="2" Padding="14,7" Background="#191C24" BorderBrush="#262B36" BorderThickness="0,1,0,0">
-      <TextBlock Text="{Binding StatusMessage}" Foreground="#C9CFD8" TextTrimming="CharacterEllipsis" />
+    <!-- 底部状态栏 -->
+    <Border Grid.Row="1" Grid.ColumnSpan="2" Background="#0E808080" BorderBrush="#40808080"
+            BorderThickness="0,1,0,0" Padding="18,8">
+      <TextBlock Classes="caption" Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis" />
     </Border>
   </Grid>
 </Window>

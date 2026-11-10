@@ -45,6 +45,15 @@ public static class SelfTestRunner
             return;
         }
 
+        if (options.SelfTest == "empty")
+        {
+            await RunEmptyStateCheckAsync(window, viewModel, log, Check);
+            Summarize(log, results);
+            await Task.Delay(300);
+            Dispatcher.UIThread.Post(window.Close);
+            return;
+        }
+
         if (string.IsNullOrEmpty(options.Directory))
         {
             log.Info("selftest 缺少 --directory");
@@ -218,6 +227,34 @@ public static class SelfTestRunner
     /// 键盘映射：在 Avalonia 的路由事件里发一个 KeyDown，验证快捷键接到了命令上。
     /// 不走操作系统输入（自检窗口不激活，硬投递 WM_KEYDOWN 会被框架按"窗口未激活"丢掉）。
     /// </summary>
+    /// <summary>
+    /// 空状态检查：没选目录时窗口不该是一大块黑。这里直接量整窗亮度，
+    /// 同时确认 mpv 的原生窗口还没被创建（否则会盖住占位文案）。
+    /// </summary>
+    private static async Task RunEmptyStateCheckAsync(
+        Views.MainWindow window,
+        MainWindowViewModel viewModel,
+        AppLogger log,
+        Action<string, bool, string> check)
+    {
+        await Task.Delay(1200);
+
+        check("empty-no-player-area", !viewModel.IsPlayerVisible, $"播放区可见={viewModel.IsPlayerVisible}");
+        check("empty-title", viewModel.PlaybackTitle == "还没有打开录像", $"标题「{viewModel.PlaybackTitle}」");
+
+        IntPtr hwnd = window.WindowHandle;
+        if (hwnd == IntPtr.Zero)
+        {
+            check("empty-window-capture", false, "拿不到窗口句柄");
+            return;
+        }
+
+        CapturedFrame frame = WindowCapture.Capture(hwnd);
+        RegionStats whole = WindowCapture.AnalyzeRegion(frame, 0, 0, frame.Width, frame.Height);
+        log.Info($"空状态整窗 {frame.Width}x{frame.Height} {whole}");
+        check("empty-window-not-black", whole.MeanLuminance > 100, $"整窗平均亮度 {whole.MeanLuminance:0.0}");
+    }
+
     /// <summary>
     /// 三个针对性场景：断点续做的写/读两段（必需两次进程），以及非常帧率录像的退化步进。
     /// </summary>
