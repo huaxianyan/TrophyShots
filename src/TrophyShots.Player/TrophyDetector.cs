@@ -177,11 +177,55 @@ public sealed class TrophyDetector
 
         string directory = Path.Combine(tempDirectory, "tail");
         Directory.CreateDirectory(directory);
-        // 默认只解关键帧：30 秒窗口 0.5 秒（逐帧抽样要 3.8 秒），关键帧间隔约 4 秒、
-        // 横幅约 5 秒，通常至少有一个关键帧落在横幅里。dense 是给"极短横幅"的兜底。
-        List<double> tailTimes = await ExtractFramesAsync(
-            videoPath, directory, null, null, dense ? TailFps : null, cancellationToken,
-            tailSeconds: TailSeconds).ConfigureAwait(false);
+        // 关键帧间隔约 4 秒，结尾最后几秒的奖杯可能整个落在最后一个 GOP 里（一个关键帧都没有），
+        // 所以关键帧之外再补一段"最后 10 秒逐帧抽样"，堵住这个漏洞。
+        List<double> tailTimes;
+        if (dense)
+        {
+            tailTimes = await ExtractFramesAsync(
+                videoPath, directory, null, null, TailFps, cancellationToken,
+                tailSeconds: TailSeconds).ConfigureAwait(false);
+        }
+        else
+        {
+            tailTimes = await ExtractFramesAsync(
+                videoPath, directory, null, null, null, cancellationToken,
+                tailSeconds: TailSeconds).ConfigureAwait(false);
+
+            string denseDirectory = Path.Combine(directory, "dense");
+            Directory.CreateDirectory(denseDirectory);
+            List<double> denseTimes = await ExtractFramesAsync(
+                videoPath, denseDirectory, null, null, TailFps, cancellationToken,
+                tailSeconds: 10).ConfigureAwait(false);
+
+            string[] denseFrames = Directory.GetFiles(denseDirectory, "*.png");
+            Array.Sort(denseFrames, StringComparer.Ordinal);
+            var denseHits = new List<(double Time, string Text)>();
+            for (int i = 0; i < denseFrames.Length; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                (bool hit, string text) = await RecognizeAsync(denseFrames[i], engines, cancellationToken).ConfigureAwait(false);
+                if (hit)
+                {
+                    denseHits.Add((i < denseTimes.Count ? denseTimes[i] : 0, text));
+                }
+            }
+
+            string[] tailFrames = Directory.GetFiles(directory, "*.png");
+            Array.Sort(tailFrames, StringComparer.Ordinal);
+            var tailHits = new List<(double Time, string Text)>();
+            for (int i = 0; i < tailFrames.Length; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                (bool hit, string text) = await RecognizeAsync(tailFrames[i], engines, cancellationToken).ConfigureAwait(false);
+                if (hit)
+                {
+                    tailHits.Add((i < tailTimes.Count ? tailTimes[i] : 0, text));
+                }
+            }
+
+            return SplitByText(tailHits.Concat(denseHits).OrderBy(h => h.Time).ToList());
+        }
 
         string[] frames = Directory.GetFiles(directory, "*.png");
         Array.Sort(frames, StringComparer.Ordinal);
