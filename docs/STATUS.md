@@ -10,9 +10,12 @@ M2 完成：断点续做、非常帧率退化步进、损坏文件跳过与末�
 
 ## 2026-11-10 应用图标
 
-- 新增 `src/TrophyShots.App/Assets/app.png`（1024，窗口图标）与 `app.ico`（16/24/32/48/64/128/256 多尺寸，exe 图标）。设计：深色圆角底 + 金色奖杯 + 白色取景框角标。生成脚本在 `work/make_icon.py`（PIL 绘制，4 倍超采样后缩）。
-- `TrophyShots.App.csproj` 加 `ApplicationIcon=Assets\app.ico` 与 `AvaloniaResource Include="Assets\**"`；`MainWindow` 与 `DirectoryPickerWindow` 用 `Icon="/Assets/app.png"`。
-- 验收：`ExtractAssociatedIcon` 从 exe 取到 32×32 图标（内容正确）；`--selftest empty` 3/3、`--selftest basic` 16/16 仍全绿（资源缺失时 Avalonia 建窗会直接抛异常，两轮都正常建窗即证明资源已打进程序集）。
+- 图案取自用户自己的奖杯页面 `https://neko7ina.com/trophies/` 里的 `.icon-trophy` 字形（Fluent 风格实心奖杯，viewBox 0 0 24 24），不再自己画。
+- 配色沿用该站：底 `#3d4f70 → #2f4154 → #1e2a3a`（navbar 与深色底）、奖杯金色渐变 `#f6d79a / #dcaa55 / #b9832f`（对应站内 `text-gold` `#c2903e` 一族）；圆角 232/1024，顶部一层柔和高光。
+- 产物：`src/TrophyShots.App/Assets/app.png`（1024，窗口图标）与 `app.ico`（16/24/32/48/64/128/256，exe 图标）。
+- 做法：本地 HTML 里放字形 + CSS 底色，用 headless Edge 以透明背景截 1024×1024（`--default-background-color=00000000`），再用 PIL 缩出各尺寸与 ico。字形需重绘时从上面那个页面的 CSS 里取 `--svg` 的 path。
+- 接线：`ApplicationIcon=Assets\app.ico` + `AvaloniaResource Include="Assets\**"`，`MainWindow` 与 `DirectoryPickerWindow` 用 `Icon="/Assets/app.png"`。
+- 验收：`ExtractAssociatedIcon` 从 exe 取到 32×32 且图案正确；`--selftest empty` 3/3、`basic` 16/16 全绿。
 
 ## 2026-11-10 反馈修复：侧栏与状态栏重叠、列表缩略图、播放黑屏排查
 
