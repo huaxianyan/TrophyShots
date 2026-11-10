@@ -30,6 +30,9 @@ public sealed class MpvIpc : IAsyncDisposable
     /// <summary>收到 <c>property-change</c> 事件：属性名与当前值。</summary>
     public event Action<string, JsonElement>? PropertyChanged;
 
+    /// <summary>mpv 自己的日志消息（需要先 request_log_messages），格式为「前缀 + 正文」。</summary>
+    public event Action<string>? LogMessage;
+
     /// <summary>读循环异常结束（mpv 退出、管道断开）。</summary>
     public event Action<string>? Faulted;
 
@@ -182,6 +185,17 @@ public sealed class MpvIpc : IAsyncDisposable
             }
 
             if (root.TryGetProperty("event", out JsonElement eventName)
+                && eventName.GetString() == "log-message"
+                && root.TryGetProperty("text", out JsonElement text))
+            {
+                string prefix = root.TryGetProperty("prefix", out JsonElement prefixElement)
+                    ? prefixElement.GetString() ?? ""
+                    : "";
+                LogMessage?.Invoke($"{prefix}{text.GetString()}".Trim());
+                return;
+            }
+
+            if (root.TryGetProperty("event", out eventName)
                 && eventName.GetString() == "property-change"
                 && root.TryGetProperty("name", out JsonElement name)
                 && name.GetString() is { } propertyName)

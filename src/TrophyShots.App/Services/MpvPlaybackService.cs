@@ -47,6 +47,7 @@ public sealed class MpvPlaybackService : IAsyncDisposable
         }, cancellationToken).ConfigureAwait(false);
 
         player.PropertyChanged += (name, value) => PropertyChanged?.Invoke(name, value);
+        player.LogReceived += message => _log.Info($"mpv: {message}");
         player.Faulted += reason =>
         {
             _log.Info($"mpv 连接中断：{reason}");
@@ -72,6 +73,9 @@ public sealed class MpvPlaybackService : IAsyncDisposable
 
     public Task<double?> GetNumberAsync(string property, CancellationToken cancellationToken) =>
         RequirePlayer().GetNumberAsync(property, cancellationToken);
+
+    public Task<string?> GetStringAsync(string property, CancellationToken cancellationToken) =>
+        RequirePlayer().GetStringAsync(property, cancellationToken);
 
     public Task<bool> WaitForFirstFrameAsync(TimeSpan timeout, CancellationToken cancellationToken) =>
         RequirePlayer().WaitForFirstFrameAsync(timeout, cancellationToken);

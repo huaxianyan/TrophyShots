@@ -53,8 +53,8 @@
 
   <Grid ColumnDefinitions="320,*" RowDefinitions="*,Auto">
 
-    <!-- 左侧：目录、录像列表、进度 -->
-    <Border Grid.RowSpan="2" Background="#0E808080" BorderBrush="#40808080" BorderThickness="0,0,1,0">
+    <!-- 左侧：目录、录像列表、进度。只占第一行，别和底部状态栏叠在一起。 -->
+    <Border Grid.Row="0" Grid.Column="0" Background="#0E808080" BorderBrush="#40808080" BorderThickness="0,0,1,0">
       <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
 
         <StackPanel Margin="8,8,8,18" Spacing="4">
@@ -77,12 +77,21 @@
                    Background="Transparent">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:VideoItemViewModel">
-                <Grid ColumnDefinitions="*,Auto" Margin="4,3">
-                  <StackPanel Grid.Column="0" Spacing="2">
+                <Grid ColumnDefinitions="Auto,*,Auto" Margin="4,4">
+                  <Border Grid.Column="0" Width="84" Height="48" CornerRadius="6" Margin="0,0,10,0"
+                          Background="#18808080" ClipToBounds="True">
+                    <Panel>
+                      <TextBlock Text="预览" FontSize="10" Opacity="0.45"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                                 IsVisible="{Binding !HasThumbnail}" />
+                      <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                    </Panel>
+                  </Border>
+                  <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                     <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
                     <TextBlock Classes="caption" Text="{Binding DetailText}" />
                   </StackPanel>
-                  <Border Grid.Column="1" VerticalAlignment="Center" CornerRadius="9" Padding="8,2"
+                  <Border Grid.Column="2" VerticalAlignment="Center" CornerRadius="9" Padding="8,2"
                           Background="#16808080">
                     <TextBlock Text="{Binding StatusText}" FontSize="11" />
                   </Border>

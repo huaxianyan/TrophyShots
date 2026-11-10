@@ -27,12 +27,16 @@ public sealed class MpvPlayer : IAsyncDisposable
         _ipc = ipc;
         _ipc.PropertyChanged += (name, value) => PropertyChanged?.Invoke(name, value);
         _ipc.Faulted += reason => Faulted?.Invoke(reason);
+        _ipc.LogMessage += message => LogReceived?.Invoke(message);
     }
 
     /// <summary>mpv 的属性变化事件（在 IPC 读线程上触发，调用方自己切线程）。</summary>
     public event Action<string, JsonElement>? PropertyChanged;
 
     public event Action<string>? Faulted;
+
+    /// <summary>mpv 自己的警告/错误日志，转发给上层记录。</summary>
+    public event Action<string>? LogReceived;
 
     public int ProcessId => _process.ProcessId;
 
@@ -48,6 +52,9 @@ public sealed class MpvPlayer : IAsyncDisposable
             {
                 await ipc.ObservePropertyAsync(property, cancellationToken).ConfigureAwait(false);
             }
+
+            // 把 mpv 的 warn/error 日志打开，解码或渲染出问题时能在我们的日志里看到原因。
+            await ipc.CommandAsync(cancellationToken, "request_log_messages", "warn").ConfigureAwait(false);
 
             var player = new MpvPlayer(process, ipc);
             process.Exited += () =>

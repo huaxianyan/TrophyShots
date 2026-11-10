@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -14,6 +15,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly AppOptions _options;
     private readonly AppLogger _log;
     private readonly MpvPlaybackService _player;
+    private readonly ThumbnailService _thumbnails;
     private CancellationTokenSource _operation = new();
     private CancellationTokenSource _scan = new();
     private string? _directory;
@@ -40,6 +42,7 @@ public partial class MainWindowViewModel : ObservableObject
         _log.Info($"截图规则：{_naming.Describe()}（配置目录 {_mpvConfigDirectory ?? "未找到"}）");
 
         _player = new MpvPlaybackService(options, log);
+        _thumbnails = new ThumbnailService(options, log);
         _player.PropertyChanged += OnPlayerPropertyChanged;
         _player.Faulted += OnPlayerFaulted;
     }
@@ -87,12 +90,25 @@ public partial class MainWindowViewModel : ObservableObject
 
     // ---------------- 生命周期 ----------------
 
-    /// <summary>视频宿主窗口就绪后拉起 mpv；有 --directory 时顺带打开该目录。</summary>
+    /// <summary>
+    /// 视频宿主窗口就绪后拉起 mpv。
+    /// 宿主窗口可能被重建（Avalonia 的 NativeControlHost 在可见性/布局变化时会重建），
+    /// 那时 mpv 还在往已经销毁的旧窗口里画——表现就是"有声音没画面"，必须换到新句柄上重接。
+    /// </summary>
     public async Task AttachVideoHostAsync(IntPtr hostHandle)
     {
+        bool reattaching = _player.IsStarted && _hostHandle != IntPtr.Zero && _hostHandle != hostHandle;
+        _log.Info($"宿主窗口 0x{hostHandle:X}（上一个 0x{_hostHandle:X}，重接={reattaching}）");
+        _hostHandle = hostHandle;
+
+        if (reattaching)
+        {
+            await RestartPlayerAsync("播放窗口重建了，正在把画面接回来…");
+            return;
+        }
+
         try
         {
-            _hostHandle = hostHandle;
             await _player.StartAsync(hostHandle, _naming, _operation.Token);
             _log.Info($"播放器就绪 pid={_player.ProcessId} host=0x{hostHandle:X}");
             StatusMessage = "播放器已就绪，选择一条录像开始。";
@@ -212,6 +228,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         StatusMessage = $"找到 {Videos.Count} 条录像，正在读取时长…";
         await ProbeDurationsAsync();
+        _ = LoadThumbnailsAsync(Videos.ToArray());
 
         _state = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
         VideoItemViewModel? target =
@@ -251,6 +268,39 @@ public partial class MainWindowViewModel : ObservableObject
             }
             catch (OperationCanceledException)
             {
+            }
+            finally
+            {
+                throttle.Release();
+            }
+        }));
+    }
+
+    /// <summary>缩略图后台生成，慢一点没关系，别卡住列表。</summary>
+    private async Task LoadThumbnailsAsync(IReadOnlyList<VideoItemViewModel> items)
+    {
+        using var throttle = new SemaphoreSlim(3);
+        CancellationToken cancellationToken = _scan.Token;
+
+        await Task.WhenAll(items.Select(async item =>
+        {
+            await throttle.WaitAsync(cancellationToken);
+            try
+            {
+                Bitmap? bitmap = await _thumbnails.GetAsync(
+                    item.FullPath, item.Duration ?? TimeSpan.Zero, cancellationToken);
+
+                if (bitmap is not null)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() => item.Thumbnail = bitmap);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                _log.Info($"缩略图异常 {item.FileName} {ex.GetType().Name}: {ex.Message}");
             }
             finally
             {
@@ -459,6 +509,13 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>当前的截图规则与录像规则，自检用来核对落盘位置。</summary>
     public string? ScreenshotTargetFor(string videoPath) => _naming.TryResolveTarget(videoPath, _mpvConfigDirectory);
+
+    /// <summary>自检用：读任意 mpv 数值属性（丢帧数、渲染帧率一类）。</summary>
+    public Task<double?> ReadPlayerNumberAsync(string property, CancellationToken cancellationToken) =>
+        _player.GetNumberAsync(property, cancellationToken);
+
+    public Task<string?> ReadPlayerStringAsync(string property, CancellationToken cancellationToken) =>
+        _player.GetStringAsync(property, cancellationToken);
 
     /// <summary>自检用：直接读 mpv 的估算帧号。</summary>
     public async Task<double?> ReadFrameAsync(CancellationToken cancellationToken) =>

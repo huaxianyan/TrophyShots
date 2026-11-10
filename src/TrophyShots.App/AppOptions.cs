@@ -7,6 +7,7 @@ public sealed class AppOptions
 {
     public string MpvPath { get; private init; } = ResolveBundled("mpv", "mpv.exe");
     public string FfprobePath { get; private init; } = ResolveBundled("ffprobe", "ffprobe.exe");
+    public string FfmpegPath { get; private init; } = ResolveBundled("ffmpeg", "ffmpeg.exe");
     public string? Directory { get; private init; }
     public string? Video { get; private init; }
     public string? LogPath { get; private init; }
@@ -35,6 +36,7 @@ public sealed class AppOptions
     {
         string mpvPath = ResolveBundled("mpv", "mpv.exe");
         string ffprobePath = ResolveBundled("ffprobe", "ffprobe.exe");
+        string ffmpegPath = ResolveBundled("ffmpeg", "ffmpeg.exe");
         string? directory = null;
         string? video = null;
         string? logPath = null;
@@ -57,6 +59,9 @@ public sealed class AppOptions
                     break;
                 case "--ffprobe":
                     ffprobePath = Next();
+                    break;
+                case "--ffmpeg":
+                    ffmpegPath = Next();
                     break;
                 case "--directory":
                     directory = Next();
@@ -96,6 +101,7 @@ public sealed class AppOptions
         {
             MpvPath = mpvPath,
             FfprobePath = ffprobePath,
+            FfmpegPath = ffmpegPath,
             Directory = directory,
             Video = video,
             LogPath = logPath,

@@ -27,7 +27,7 @@ public static class SelfTestRunner
             log.Info($"selftest {name}: {(ok ? "PASS" : "FAIL")} {detail}");
         }
 
-        if (options.SelfTest is "resume-a" or "resume-b" or "vfr" or "restart" or "broken")
+        if (options.SelfTest is "resume-a" or "resume-b" or "vfr" or "restart" or "broken" or "playback")
         {
             await RunScenarioAsync(window, viewModel, log, results, Check, options.SelfTest);
             Summarize(log, results);
@@ -77,6 +77,10 @@ public static class SelfTestRunner
             await WaitUntilAsync(() => viewModel.IsReady, TimeSpan.FromSeconds(30), token);
 
             Check("scan-count", viewModel.Videos.Count > 0, $"列表 {viewModel.Videos.Count} 条");
+
+            await WaitUntilAsync(() => viewModel.Videos[0].HasThumbnail, TimeSpan.FromSeconds(30), token);
+            Check("thumbnail-generated", viewModel.Videos[0].HasThumbnail,
+                $"首条缩略图 {(viewModel.Videos[0].HasThumbnail ? "已生成" : "未生成")}");
             Check("first-frame", viewModel.IsReady, $"当前 {viewModel.SelectedVideo?.FileName}");
 
             if (viewModel.Videos.Count >= 2)
@@ -209,6 +213,12 @@ public static class SelfTestRunner
             double? after = await viewModel.ReadFrameAsync(token);
             check("probe-step", before.HasValue && after == before + 1, $"帧 {before} -> {after}");
 
+            // 播放状态下也要看得到画面：只看暂停帧不够（用户实测过"播放时黑屏、只有声音"）。
+            await viewModel.TogglePlayCommand.ExecuteAsync(null);
+            await Task.Delay(1500);
+            CheckRendering(window, log, check, "probe-render-while-playing");
+            await viewModel.TogglePlayCommand.ExecuteAsync(null);
+
             await viewModel.SeekToAsync(0);
             await Task.Delay(200);
             check("probe-back-to-start", true, $"回到 {viewModel.PositionText}");
@@ -308,6 +318,51 @@ public static class SelfTestRunner
                         $"续做位置 {viewModel.PositionText}");
                     break;
 
+                case "playback":
+                {
+                    await viewModel.TogglePlayCommand.ExecuteAsync(null);
+
+                    var samples = new List<double>();
+                    for (int i = 0; i < 6; i++)
+                    {
+                        await Task.Delay(500, token);
+                        if (TryCaptureVideoStats(window, out RegionStats stats, out _))
+                        {
+                            samples.Add(stats.NonBlackRatio);
+                        }
+                    }
+
+                    // 播放中改窗口尺寸：画面抖动/黑屏最容易在这里暴露。
+                    window.Width = 1120;
+                    window.Height = 760;
+                    await Task.Delay(800, token);
+                    if (TryCaptureVideoStats(window, out RegionStats resized, out _))
+                    {
+                        samples.Add(resized.NonBlackRatio);
+                    }
+
+                    await viewModel.TogglePlayCommand.ExecuteAsync(null);
+
+                    check("playback-renders",
+                        samples.Count > 0 && samples.All(ratio => ratio > 0.005),
+                        $"非黑比例 {string.Join(" / ", samples.Select(ratio => ratio.ToString("P1")))}");
+
+                    double? frameDrops = await viewModel.ReadPlayerNumberAsync("frame-drop-count", token);
+                    double? decoderDrops = await viewModel.ReadPlayerNumberAsync("decoder-frame-drop-count", token);
+                    double? vfFps = await viewModel.ReadPlayerNumberAsync("estimated-vf-fps", token);
+                    string? hwdec = await viewModel.ReadPlayerStringAsync("hwdec-current", token);
+                    log.Info($"播放统计：frame-drop={frameDrops} decoder-drop={decoderDrops} vf-fps={vfFps:0.##} hwdec={hwdec}");
+
+                    check("playback-decoder-keeps-up", (decoderDrops ?? 0) < 60, $"解码丢帧 {decoderDrops}");
+
+                    foreach (string property in new[] { "video-params", "current-vo", "display-fps" })
+                    {
+                        log.Info($"播放参数 {property}={await viewModel.ReadPlayerStringAsync(property, token)}");
+                    }
+
+                    break;
+                }
+
                 case "restart":
                 {
                     int pid = viewModel.PlayerProcessId;
@@ -364,13 +419,27 @@ public static class SelfTestRunner
     }
 
     /// <summary>抓一次窗口，确认视频区真的有画面（不只是 mpv 解出了帧）。</summary>
-    private static void CheckRendering(Views.MainWindow window, AppLogger log, Action<string, bool, string> check)
+    private static void CheckRendering(Views.MainWindow window, AppLogger log, Action<string, bool, string> check, string label = "render-visible")
     {
+        if (!TryCaptureVideoStats(window, out RegionStats stats, out string detail))
+        {
+            check(label, false, detail);
+            return;
+        }
+
+        check(label, stats.NonBlackRatio > 0.005, detail);
+    }
+
+    /// <summary>量一次视频区的非黑比例；拿不到句柄或抓屏失败时返回 false。</summary>
+    private static bool TryCaptureVideoStats(Views.MainWindow window, out RegionStats stats, out string detail)
+    {
+        stats = default;
+        detail = "拿不到窗口句柄";
+
         IntPtr hwnd = window.WindowHandle;
         if (hwnd == IntPtr.Zero)
         {
-            check("render-visible", false, "拿不到窗口句柄");
-            return;
+            return false;
         }
 
         try
@@ -385,14 +454,14 @@ public static class SelfTestRunner
             int width = (int)Math.Round(window.VideoHostControl.Bounds.Width * scaling);
             int height = (int)Math.Round(window.VideoHostControl.Bounds.Height * scaling);
 
-            RegionStats stats = WindowCapture.AnalyzeRegion(frame, x, y, width, height);
-            check("render-visible", stats.NonBlackRatio > 0.005,
-                $"窗口 {frame.Width}x{frame.Height} 视频区=({x},{y},{width},{height}) {stats}");
+            stats = WindowCapture.AnalyzeRegion(frame, x, y, width, height);
+            detail = $"窗口 {frame.Width}x{frame.Height} 视频区=({x},{y},{width},{height}) {stats}";
+            return true;
         }
         catch (Exception ex)
         {
-            log.Info($"抓屏失败 {ex.GetType().Name}: {ex.Message}");
-            check("render-visible", false, $"抓屏失败：{ex.Message}");
+            detail = $"抓屏失败：{ex.Message}";
+            return false;
         }
     }
 

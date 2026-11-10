@@ -1,4 +1,5 @@
 using System.IO;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using TrophyShots.Player;
 
@@ -35,6 +36,13 @@ public partial class VideoItemViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StatusText))]
     private bool _broken;
+
+    /// <summary>列表里的小预览图，后台生成，可能为空。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasThumbnail))]
+    private Bitmap? _thumbnail;
+
+    public bool HasThumbnail => Thumbnail is not null;
 
     public string DetailText => Broken ? $"{DurationText} · 无法读取视频流" : DurationText;
 
