@@ -5,6 +5,7 @@
         x:Class="TrophyShots.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="TrophyShots"
+        Icon="/Assets/app.png"
         Width="1280" Height="820"
         MinWidth="1040" MinHeight="660">
 

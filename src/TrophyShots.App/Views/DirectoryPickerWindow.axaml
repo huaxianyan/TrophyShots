@@ -4,6 +4,7 @@
         x:Class="TrophyShots.App.Views.DirectoryPickerWindow"
         x:DataType="vm:DirectoryPickerViewModel"
         Title="选择录像目录"
+        Icon="/Assets/app.png"
         Width="760" Height="560"
         MinWidth="600" MinHeight="420"
         WindowStartupLocation="CenterOwner">

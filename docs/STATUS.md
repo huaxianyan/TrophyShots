@@ -8,6 +8,12 @@ M2 完成：断点续做、非常帧率退化步进、损坏文件跳过与末�
 
 下一步 M3：打包免安装 exe（自带 mpv 与 ffprobe）、干净机器验证；M2 余下的真机手工验收（40 条真实素材跑一遍、快捷键手感、45 分钟连续处理的内存曲线）。
 
+## 2026-11-10 应用图标
+
+- 新增 `src/TrophyShots.App/Assets/app.png`（1024，窗口图标）与 `app.ico`（16/24/32/48/64/128/256 多尺寸，exe 图标）。设计：深色圆角底 + 金色奖杯 + 白色取景框角标。生成脚本在 `work/make_icon.py`（PIL 绘制，4 倍超采样后缩）。
+- `TrophyShots.App.csproj` 加 `ApplicationIcon=Assets\app.ico` 与 `AvaloniaResource Include="Assets\**"`；`MainWindow` 与 `DirectoryPickerWindow` 用 `Icon="/Assets/app.png"`。
+- 验收：`ExtractAssociatedIcon` 从 exe 取到 32×32 图标（内容正确）；`--selftest empty` 3/3、`--selftest basic` 16/16 仍全绿（资源缺失时 Avalonia 建窗会直接抛异常，两轮都正常建窗即证明资源已打进程序集）。
+
 ## 2026-11-10 反馈修复：侧栏与状态栏重叠、列表缩略图、播放黑屏排查
 
 - **重叠**：侧栏 Border 原来跨了两行（`RowSpan=2`），把底部状态栏盖在自己身上，侧栏最后一行「已处理 x / n」正好落在状态栏底下。改成侧栏只占第一行、状态栏独占第二行。
