@@ -436,14 +436,15 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        // 默认落在最后一枚（截图要的就是最后跳的那个），再按往前翻。
         int cursor = _trophyCursor.TryGetValue(item.FullPath, out int previous)
-            ? (previous + 1) % item.Segments.Count
-            : 0;
+            ? (previous - 1 + item.Segments.Count) % item.Segments.Count
+            : item.Segments.Count - 1;
         _trophyCursor[item.FullPath] = cursor;
 
         TrophySegment segment = item.Segments[cursor];
         await SeekToAsync(segment.JumpSeconds);
-        StatusMessage = $"奖杯 {cursor + 1} / {item.Segments.Count} · 跳到 {FormatPosition(segment.StartSeconds)}（再按一次跳下一个）";
+        StatusMessage = $"奖杯 {cursor + 1} / {item.Segments.Count} · 跳到 {FormatPosition(segment.StartSeconds)}（再按一次往前翻）";
     }
 
     /// <summary>已完成 = 按当前规则算出来的那张图存在。</summary>

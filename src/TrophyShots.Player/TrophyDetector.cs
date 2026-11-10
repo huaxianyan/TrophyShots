@@ -13,8 +13,8 @@ namespace TrophyShots.Player;
 public sealed class TrophyDetector
 {
     private const string CropFilter = "crop=iw*0.52:ih*0.20:iw*0.48:0,scale=iw*0.5:-2";
-    private const double FineWindowSeconds = 8;
-    private const double FineFps = 10;
+    private const double FineWindowSeconds = 5;
+    private const double FineFps = 5;
     private const double CoarseClusterGapSeconds = 8;
     private const double SegmentGapSeconds = 1.0;
 
@@ -46,11 +46,22 @@ public sealed class TrophyDetector
         string tempDirectory = Directory.CreateTempSubdirectory("trophyshots-trophy-").FullName;
         try
         {
-            progress?.Invoke("扫描关键帧");
+            // 用户习惯：跳完奖杯立刻保存，奖杯基本都在最后 30 秒里。
+            // 先只扫这一段，命中就不再解全片——单条从 8~10 秒降到 2~4 秒。
+            progress?.Invoke("扫描片尾 30 秒");
+            IReadOnlyList<TrophySegment> tail = await ScanTailAsync(videoPath, tempDirectory, engines, cancellationToken, 30)
+                .ConfigureAwait(false);
+            if (tail.Count > 0)
+            {
+                return MergeDuplicates(tail);
+            }
+
+            progress?.Invoke("片尾没有，扫描全片关键帧");
             string coarseDirectory = Path.Combine(tempDirectory, "coarse");
             Directory.CreateDirectory(coarseDirectory);
             List<double> coarseTimes = await ExtractFramesAsync(
-                videoPath, coarseDirectory, from: null, duration: null, fps: null, cancellationToken).ConfigureAwait(false);
+                videoPath, coarseDirectory, from: null, duration: null, fps: null,
+                cancellationToken, hardwareDecode: true).ConfigureAwait(false);
 
             string[] coarseFrames = Directory.GetFiles(coarseDirectory, "*.png");
             Array.Sort(coarseFrames, StringComparer.Ordinal);
@@ -73,10 +84,10 @@ public sealed class TrophyDetector
 
             if (coarseHits.Count == 0)
             {
-                // 关键帧间隔约 4 秒，极短的横幅可能整段落在两个关键帧之间。
-                // 用户习惯"跳完奖杯立刻保存"，所以只对片尾再补扫一遍，代价很小。
-                progress?.Invoke("关键帧没命中，补扫片尾");
-                return await ScanTailAsync(videoPath, tempDirectory, engines, cancellationToken).ConfigureAwait(false);
+                progress?.Invoke("关键帧没命中，逐帧补扫片尾");
+                IReadOnlyList<TrophySegment> rescue = await ScanTailAsync(
+                    videoPath, tempDirectory, engines, cancellationToken, 60, dense: true).ConfigureAwait(false);
+                return MergeDuplicates(rescue);
             }
 
             progress?.Invoke($"正在定位 {coarseHits.Count} 处候选");
@@ -109,7 +120,7 @@ public sealed class TrophyDetector
                 segments.AddRange(SplitByText(hits));
             }
 
-            return segments.OrderBy(s => s.StartSeconds).ToList();
+            return MergeDuplicates(segments);
         }
         finally
         {
@@ -117,20 +128,60 @@ public sealed class TrophyDetector
         }
     }
 
+    /// <summary>
+    /// 去重：同一枚奖杯被切成多段（标题几乎一样、或时间有重叠）就并成一段。
+    /// 用户反馈过"跳来跳去还是同一枚"，所以宁可并，不留重复。
+    /// </summary>
+    internal static List<TrophySegment> MergeDuplicates(IEnumerable<TrophySegment> segments)
+    {
+        var ordered = segments.OrderBy(s => s.StartSeconds).ToList();
+        var merged = new List<TrophySegment>();
+
+        foreach (TrophySegment segment in ordered)
+        {
+            if (merged.Count > 0)
+            {
+                TrophySegment previous = merged[^1];
+                double gap = segment.StartSeconds - previous.EndSeconds;
+                bool overlapping = gap < 0;
+                bool sameContent = SameTrophy(previous.Text, segment.Text);
+
+                if (overlapping || (sameContent && gap <= 5.0))
+                {
+                    merged[^1] = previous with
+                    {
+                        EndSeconds = Math.Max(previous.EndSeconds, segment.EndSeconds),
+                        Text = previous.Text.Length >= segment.Text.Length ? previous.Text : segment.Text,
+                    };
+                    continue;
+                }
+            }
+
+            merged.Add(segment);
+        }
+
+        return merged;
+    }
+
     /// <summary>片尾补扫：按 2fps 解最后 60 秒，命中则同样进精定位。</summary>
     private async Task<IReadOnlyList<TrophySegment>> ScanTailAsync(
         string videoPath,
         string tempDirectory,
         OcrEngine[] engines,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        double tailSeconds,
+        bool dense = false)
     {
-        const double TailSeconds = 60;
-        const double TailFps = 2;
+        double TailSeconds = tailSeconds;
+        const double TailFps = 2;   // 关键帧间隔约 4 秒，只作粗扫定位用
 
         string directory = Path.Combine(tempDirectory, "tail");
         Directory.CreateDirectory(directory);
+        // 默认只解关键帧：30 秒窗口 0.5 秒（逐帧抽样要 3.8 秒），关键帧间隔约 4 秒、
+        // 横幅约 5 秒，通常至少有一个关键帧落在横幅里。dense 是给"极短横幅"的兜底。
         List<double> tailTimes = await ExtractFramesAsync(
-            videoPath, directory, null, null, TailFps, cancellationToken, tailSeconds: TailSeconds).ConfigureAwait(false);
+            videoPath, directory, null, null, dense ? TailFps : null, cancellationToken,
+            tailSeconds: TailSeconds).ConfigureAwait(false);
 
         string[] frames = Directory.GetFiles(directory, "*.png");
         Array.Sort(frames, StringComparer.Ordinal);
@@ -322,7 +373,8 @@ public sealed class TrophyDetector
         double? duration,
         double? fps,
         CancellationToken cancellationToken,
-        double? tailSeconds = null)
+        double? tailSeconds = null,
+        bool hardwareDecode = false)
     {
         var startInfo = new ProcessStartInfo(_ffmpegPath)
         {
@@ -331,6 +383,14 @@ public sealed class TrophyDetector
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        if (hardwareDecode)
+        {
+            // 只解关键帧时帧数少，硬件解码净赚（93 帧全片 7.8s → 3.5s）；
+            // 逐帧抽样的场景反而更慢（每帧都要回读到内存做裁剪），所以按用途开关。
+            startInfo.ArgumentList.Add("-hwaccel");
+            startInfo.ArgumentList.Add("auto");
+        }
 
         if (fps is null)
         {
