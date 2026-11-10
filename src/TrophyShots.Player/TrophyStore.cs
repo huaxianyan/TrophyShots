@@ -16,7 +16,7 @@ public sealed class TrophyStore
     };
 
     /// <summary>检测算法版本：逻辑变了就升号，旧的"未检出"自动失效重算。</summary>
-    private const int DetectorVersion = 14;
+    private const int DetectorVersion = 15;
 
     private readonly string _path;
     private readonly Dictionary<string, Entry> _entries;

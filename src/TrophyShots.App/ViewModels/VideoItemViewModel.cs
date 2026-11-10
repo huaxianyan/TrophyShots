@@ -57,7 +57,9 @@ public partial class VideoItemViewModel : ObservableObject
     public void ApplyTrophies(IReadOnlyList<TrophySegment> segments)
     {
         Segments = segments;
-        TrophyText = segments.Count == 0 ? "未检出" : $"奖杯 ×{segments.Count}";
+        TrophyText = segments.Count == 0
+            ? "未检出"
+            : $"奖杯 {TimeSpan.FromSeconds(segments[^1].StartSeconds):mm\\:ss}";
     }
 
     /// <summary>列表里的小预览图，后台生成，可能为空。</summary>

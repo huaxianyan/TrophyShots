@@ -53,7 +53,7 @@ public sealed class TrophyDetector
                 .ConfigureAwait(false);
             if (tail.Count > 0)
             {
-                return MergeDuplicates(tail);
+                return KeepLastTrophy(tail);
             }
 
             progress?.Invoke("片尾没有，扫描全片关键帧");
@@ -87,7 +87,7 @@ public sealed class TrophyDetector
                 progress?.Invoke("关键帧没命中，逐帧补扫片尾");
                 IReadOnlyList<TrophySegment> rescue = await ScanTailAsync(
                     videoPath, tempDirectory, engines, cancellationToken, 60, dense: true).ConfigureAwait(false);
-                return MergeDuplicates(rescue);
+                return KeepLastTrophy(rescue);
             }
 
             progress?.Invoke($"正在定位 {coarseHits.Count} 处候选");
@@ -120,7 +120,7 @@ public sealed class TrophyDetector
                 segments.AddRange(SplitByText(hits));
             }
 
-            return MergeDuplicates(segments);
+            return KeepLastTrophy(segments);
         }
         finally
         {
@@ -132,6 +132,30 @@ public sealed class TrophyDetector
     /// 去重：同一枚奖杯被切成多段（标题几乎一样、或时间有重叠）就并成一段。
     /// 用户反馈过"跳来跳去还是同一枚"，所以宁可并，不留重复。
     /// </summary>
+    /// <summary>
+    /// 收口：同一枚奖杯被切开的段先合并，然后只保留最后一枚。
+    /// 与最后一段间隔 ≤1.5 秒的段一起并进来——那通常就是同一个横幅被切成的两半，
+    /// 多留一点起点比少留安全（跳早了可以往后走，跳晚了就错过画面）。
+    /// </summary>
+    internal static List<TrophySegment> KeepLastTrophy(IEnumerable<TrophySegment> segments)
+    {
+        List<TrophySegment> merged = MergeDuplicates(segments);
+        if (merged.Count <= 1)
+        {
+            return merged;
+        }
+
+        TrophySegment last = merged[^1];
+        int from = merged.Count - 1;
+        while (from > 0 && last.StartSeconds - merged[from - 1].EndSeconds <= 1.5)
+        {
+            from--;
+            last = last with { StartSeconds = merged[from].StartSeconds };
+        }
+
+        return new List<TrophySegment> { last };
+    }
+
     internal static List<TrophySegment> MergeDuplicates(IEnumerable<TrophySegment> segments)
     {
         var ordered = segments.OrderBy(s => s.StartSeconds).ToList();
