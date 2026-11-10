@@ -16,6 +16,10 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly AppLogger _log;
     private readonly MpvPlaybackService _player;
     private readonly ThumbnailService _thumbnails;
+    private readonly TrophyDetector _trophyDetector;
+    private readonly TrophyStore _trophyStore;
+    private readonly Dictionary<string, int> _trophyCursor = new();
+    private CancellationTokenSource? _preprocess;
     private CancellationTokenSource _operation = new();
     private CancellationTokenSource _scan = new();
     private string? _directory;
@@ -43,6 +47,8 @@ public partial class MainWindowViewModel : ObservableObject
 
         _player = new MpvPlaybackService(options, log);
         _thumbnails = new ThumbnailService(options, log);
+        _trophyDetector = new TrophyDetector(options.FfmpegPath, options.FfprobePath);
+        _trophyStore = new TrophyStore();
         _player.PropertyChanged += OnPlayerPropertyChanged;
         _player.Faulted += OnPlayerFaulted;
     }
@@ -52,6 +58,16 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>当前打开的目录（没打开过就是 null），给目录选择器当起始位置。</summary>
     public string? CurrentDirectory => _directory;
+
+    /// <summary>后台预处理（识别跳奖杯片段）是否在跑，界面据此显示角落进度条。</summary>
+    [ObservableProperty]
+    private bool _isPreprocessing;
+
+    [ObservableProperty]
+    private double _preprocessProgress;
+
+    [ObservableProperty]
+    private string _preprocessText = "";
 
     public System.Collections.ObjectModel.ObservableCollection<VideoItemViewModel> Videos { get; } = [];
 
@@ -129,6 +145,8 @@ public partial class MainWindowViewModel : ObservableObject
 
     public async Task ShutdownAsync()
     {
+        _preprocess?.Cancel();
+
         _shuttingDown = true;
         SaveState(SelectedVideo, PositionSeconds);
         await _player.DisposeAsync();
@@ -169,6 +187,7 @@ public partial class MainWindowViewModel : ObservableObject
         UpdateProgress();
         OnPropertyChanged(nameof(IsPlayerVisible));
         SelectedVideo = item;
+        StartTrophyPreprocessing();
         return Task.CompletedTask;
     }
 
@@ -229,6 +248,7 @@ public partial class MainWindowViewModel : ObservableObject
         StatusMessage = $"找到 {Videos.Count} 条录像，正在读取时长…";
         await ProbeDurationsAsync();
         _ = LoadThumbnailsAsync(Videos.ToArray());
+        StartTrophyPreprocessing();
 
         _state = ProcessingState.Load(VideoLibrary.StatePathFor(directory));
         VideoItemViewModel? target =
@@ -307,6 +327,123 @@ public partial class MainWindowViewModel : ObservableObject
                 throttle.Release();
             }
         }));
+    }
+
+    /// <summary>扫描完目录就后台跑奖杯识别：先用缓存，缺的逐条检测并刷新进度。</summary>
+    private void StartTrophyPreprocessing()
+    {
+        _preprocess?.Cancel();
+        _preprocess?.Dispose();
+        _preprocess = null;
+
+        if (!TrophyDetector.IsSupported || Videos.Count == 0)
+        {
+            return;
+        }
+
+        var token = CancellationTokenSource.CreateLinkedTokenSource(_scan.Token);
+        _preprocess = token;
+        _ = PreprocessTrophiesAsync(Videos.ToArray(), token.Token);
+    }
+
+    private async Task PreprocessTrophiesAsync(IReadOnlyList<VideoItemViewModel> items, CancellationToken cancellationToken)
+    {
+        foreach (VideoItemViewModel item in items)
+        {
+            IReadOnlyList<TrophySegment>? cached = _trophyStore.TryGet(item.FullPath);
+            if (cached is not null)
+            {
+                item.ApplyTrophies(cached);
+            }
+            else
+            {
+                item.MarkTrophyPending();
+            }
+        }
+
+        VideoItemViewModel[] pending = items
+            .Where(item => !item.Broken && _trophyStore.TryGet(item.FullPath) is null)
+            .ToArray();
+
+        if (pending.Length == 0)
+        {
+            return;
+        }
+
+        IsPreprocessing = true;
+        PreprocessProgress = 0;
+        int done = 0;
+
+        try
+        {
+            foreach (VideoItemViewModel item in pending)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                item.MarkTrophyRunning();
+                PreprocessText = $"正在识别跳奖杯 {done + 1} / {pending.Length}：{item.FileName}";
+
+                try
+                {
+                    IReadOnlyList<TrophySegment> segments = await Task.Run(
+                        () => _trophyDetector.DetectAsync(
+                            item.FullPath,
+                            message => _log.Info($"奖杯诊断 {item.FileName}: {message}"),
+                            cancellationToken), cancellationToken);
+                    _trophyStore.Save(item.FullPath, segments);
+                    item.ApplyTrophies(segments);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _log.Info($"奖杯识别失败 {item.FileName} {ex.GetType().Name}: {ex.Message}");
+                    item.MarkTrophyFailed();
+                }
+
+                done++;
+                PreprocessProgress = (double)done / pending.Length;
+                PreprocessText = $"正在识别跳奖杯 {done} / {pending.Length}：{item.FileName}";
+            }
+
+            PreprocessText = $"奖杯识别完成：{pending.Length} 条";
+        }
+        catch (OperationCanceledException)
+        {
+            PreprocessText = "";
+        }
+        finally
+        {
+            IsPreprocessing = false;
+        }
+    }
+
+    /// <summary>在有奖杯的片段起点之间循环跳转（再次按就跳下一个）。</summary>
+    [RelayCommand]
+    private async Task JumpToTrophyAsync()
+    {
+        if (SelectedVideo is not { } item)
+        {
+            return;
+        }
+
+        if (item.Segments.Count == 0)
+        {
+            StatusMessage = item.TrophyText == "检测中…"
+                ? "奖杯还在识别，稍等一下"
+                : "这条录像没有识别到跳奖杯的片段";
+            return;
+        }
+
+        int cursor = _trophyCursor.TryGetValue(item.FullPath, out int previous)
+            ? (previous + 1) % item.Segments.Count
+            : 0;
+        _trophyCursor[item.FullPath] = cursor;
+
+        TrophySegment segment = item.Segments[cursor];
+        await SeekToAsync(segment.JumpSeconds);
+        StatusMessage = $"奖杯 {cursor + 1} / {item.Segments.Count} · 跳到 {FormatPosition(segment.StartSeconds)}（再按一次跳下一个）";
     }
 
     /// <summary>已完成 = 按当前规则算出来的那张图存在。</summary>

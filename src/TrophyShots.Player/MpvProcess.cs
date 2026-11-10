@@ -110,7 +110,7 @@ public sealed class MpvProcess : IDisposable
         yield return "--pause";                        // 打开即暂停，显示首帧
         yield return "--keep-open=yes";
         yield return "--idle=yes";
-        yield return "--hwdec=no";                     // M0 实测软件解码单步 3ms；硬解留到后续评估
+        yield return "--hwdec=auto-safe";              // 硬件解码；auto-safe 会自动跳过不稳的组合
         yield return "--hr-seek=yes";
 
         if (!string.IsNullOrEmpty(options.ScreenshotTemplate))

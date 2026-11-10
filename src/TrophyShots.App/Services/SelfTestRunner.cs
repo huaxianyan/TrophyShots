@@ -27,7 +27,7 @@ public static class SelfTestRunner
             log.Info($"selftest {name}: {(ok ? "PASS" : "FAIL")} {detail}");
         }
 
-        if (options.SelfTest is "resume-a" or "resume-b" or "vfr" or "restart" or "broken" or "playback")
+        if (options.SelfTest is "resume-a" or "resume-b" or "vfr" or "restart" or "broken" or "playback" or "trophies")
         {
             await RunScenarioAsync(window, viewModel, log, results, Check, options.SelfTest);
             Summarize(log, results);
@@ -276,7 +276,8 @@ public static class SelfTestRunner
         Action<string, bool, string> check,
         string mode)
     {
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var cancellation = new CancellationTokenSource(
+            mode == "trophies" ? TimeSpan.FromMinutes(30) : TimeSpan.FromMinutes(2));
         CancellationToken token = cancellation.Token;
         string directory = App.Options.Directory!;
 
@@ -317,6 +318,48 @@ public static class SelfTestRunner
                     check("resume-position", viewModel.PositionSeconds is > 2.0 and < 3.2,
                         $"续做位置 {viewModel.PositionText}");
                     break;
+
+                case "trophies":
+                {
+                    await WaitUntilAsync(() => !viewModel.IsPreprocessing, TimeSpan.FromMinutes(15), token);
+
+                    foreach (var item in viewModel.Videos)
+                    {
+                        string segments = string.Join(", ", item.Segments.Select(
+                            s => $"{s.StartSeconds:0.00}-{s.EndSeconds:0.00}s \"{s.Text}\""));
+                        log.Info($"奖杯 {item.FileName}：{item.TrophyText} {segments}");
+                    }
+
+                    int detected = viewModel.Videos.Count(v => v.HasTrophies);
+                    check("trophy-preprocess-finished", !viewModel.IsPreprocessing,
+                        $"预处理结束，识别 {detected} / {viewModel.Videos.Count} 条");
+
+                    if (viewModel.SelectedVideo is { } current && current.HasTrophies)
+                    {
+                        await viewModel.JumpToTrophyCommand.ExecuteAsync(null);
+                        await Task.Delay(600, token);
+                        double expected = current.Segments[0].JumpSeconds;
+                        check("trophy-jump-first",
+                            Math.Abs(viewModel.PositionSeconds - expected) < 1.5,
+                            $"跳到 {viewModel.PositionSeconds:0.00}s（期望 {expected:0.00}s）");
+
+                        if (current.Segments.Count > 1)
+                        {
+                            await viewModel.JumpToTrophyCommand.ExecuteAsync(null);
+                            await Task.Delay(600, token);
+                            double second = current.Segments[1].JumpSeconds;
+                            check("trophy-jump-cycles",
+                                Math.Abs(viewModel.PositionSeconds - second) < 1.5,
+                                $"再按跳到 {viewModel.PositionSeconds:0.00}s（期望 {second:0.00}s）");
+                        }
+                    }
+                    else
+                    {
+                        check("trophy-jump-first", false, "当前录像没有识别到奖杯片段");
+                    }
+
+                    break;
+                }
 
                 case "playback":
                 {
@@ -414,6 +457,7 @@ public static class SelfTestRunner
         }
         catch (Exception ex)
         {
+            log.Info(ex.ToString());
             check($"{mode}-exception", false, $"{ex.GetType().Name}: {ex.Message}");
         }
     }

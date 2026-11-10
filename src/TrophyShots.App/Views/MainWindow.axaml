@@ -78,7 +78,7 @@
                    Background="Transparent">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:VideoItemViewModel">
-                <Grid ColumnDefinitions="Auto,*,Auto" Margin="4,4">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="4,4">
                   <Border Grid.Column="0" Width="84" Height="48" CornerRadius="6" Margin="0,0,10,0"
                           Background="#18808080" ClipToBounds="True">
                     <Panel>
@@ -93,6 +93,10 @@
                     <TextBlock Classes="caption" Text="{Binding DetailText}" />
                   </StackPanel>
                   <Border Grid.Column="2" VerticalAlignment="Center" CornerRadius="9" Padding="8,2"
+                          Margin="0,0,4,0" Background="#16808080">
+                    <TextBlock Text="{Binding TrophyText}" FontSize="11" />
+                  </Border>
+                  <Border Grid.Column="3" VerticalAlignment="Center" CornerRadius="9" Padding="8,2"
                           Background="#16808080">
                     <TextBlock Text="{Binding StatusText}" FontSize="11" />
                   </Border>
@@ -118,6 +122,15 @@
         <Grid>
           <Border Background="Black" IsVisible="{Binding IsPlayerVisible}" />
           <controls:MpvHostControl x:Name="VideoHost" IsVisible="{Binding IsPlayerVisible}" />
+
+          <Border IsVisible="{Binding IsPreprocessing}" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                  Margin="14" CornerRadius="10" Padding="14,10" MinWidth="300" Background="#E61A1A1A">
+            <StackPanel Spacing="8">
+              <TextBlock Text="{Binding PreprocessText}" FontSize="12" Foreground="#F2FFFFFF"
+                         TextTrimming="CharacterEllipsis" />
+              <ProgressBar Minimum="0" Maximum="1" Value="{Binding PreprocessProgress}" Height="4" />
+            </StackPanel>
+          </Border>
 
           <StackPanel IsVisible="{Binding !IsPlayerVisible}" VerticalAlignment="Center"
                       HorizontalAlignment="Center" Spacing="10" Margin="32">
@@ -150,6 +163,7 @@
             <Button Content="+1 秒" Command="{Binding SecondForwardCommand}" />
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+            <Button Content="跳奖杯 (T)" Command="{Binding JumpToTrophyCommand}" />
             <Button Content="重截当前" Command="{Binding RecaptureCommand}" />
             <Button Classes="accent" Content="截图并下一条" Command="{Binding CaptureCommand}" />
           </StackPanel>

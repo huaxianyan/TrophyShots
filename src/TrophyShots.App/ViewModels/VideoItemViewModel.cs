@@ -37,6 +37,29 @@ public partial class VideoItemViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(StatusText))]
     private bool _broken;
 
+    /// <summary>预处理得到的奖杯片段（按时间正序）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTrophies))]
+    private IReadOnlyList<TrophySegment> _segments = Array.Empty<TrophySegment>();
+
+    /// <summary>预处理状态：未检测 / 检测中… / 奖杯 ×N / 未检出 / 检测失败。</summary>
+    [ObservableProperty]
+    private string _trophyText = "未检测";
+
+    public bool HasTrophies => Segments.Count > 0;
+
+    public void MarkTrophyPending() => TrophyText = "未检测";
+
+    public void MarkTrophyRunning() => TrophyText = "检测中…";
+
+    public void MarkTrophyFailed() => TrophyText = "检测失败";
+
+    public void ApplyTrophies(IReadOnlyList<TrophySegment> segments)
+    {
+        Segments = segments;
+        TrophyText = segments.Count == 0 ? "未检出" : $"奖杯 ×{segments.Count}";
+    }
+
     /// <summary>列表里的小预览图，后台生成，可能为空。</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasThumbnail))]

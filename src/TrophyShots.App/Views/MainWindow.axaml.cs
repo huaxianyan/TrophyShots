@@ -202,6 +202,10 @@ public partial class MainWindow : Window
                 _ = _viewModel.CaptureCommand.ExecuteAsync(null);
                 return true;
 
+            case Key.T:
+                _ = _viewModel.JumpToTrophyCommand.ExecuteAsync(null);
+                return true;
+
             case Key.Back:
                 _ = _viewModel.RecaptureCommand.ExecuteAsync(null);
                 return true;
